@@ -1,0 +1,26 @@
+{
+  "name": "Consultorio · Asistencia",
+  "short_name": "Consultorio",
+  "description": "Registro de asistencia con firma para pacientes",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#FBF7F1",
+  "theme_color": "#FBF7F1",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
