@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.2.0';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -100,7 +100,24 @@ const DEFAULTS = {
   consultorio: '', scriptUrl: '', token: '',
   autoOpen: true, preMin: 10, lockMin: 3, wakeLock: true,
   pinHash: null, pinSalt: null, lastBackup: null,
+  allowNameLogin: true, portalMin: 2,
 };
+const MEDIOS = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Mercado Pago', 'Otro'];
+const COBERTURAS = ['Particular', 'ASSE', 'CASMU', 'Médica Uruguaya', 'Española', 'SMI', 'Hospital Británico', 'Hospital Evangélico', 'COSEM', 'Círculo Católico', 'CUDAM', 'MP', 'Universal', 'GREMCA', 'Blue Cross', 'Seguro Americano'];
+const isPaid = s => !!(s.pago && s.pago.fecha);
+function edad(iso) {
+  if (!iso) return null; const [y, m, d] = iso.split('-').map(Number); const t = new Date();
+  let a = t.getFullYear() - y; if (t.getMonth() + 1 < m || (t.getMonth() + 1 === m && t.getDate() < d)) a--; return a;
+}
+function diasParaCumple(iso, hoy = new Date()) {
+  if (!iso) return null; const [, m, d] = iso.split('-').map(Number);
+  const h = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  let c = new Date(h.getFullYear(), m - 1, d); if (c < h) c = new Date(h.getFullYear() + 1, m - 1, d);
+  return Math.round((c - h) / 864e5);
+}
+const cumpleHoy = p => !!p && diasParaCumple(p.fechaNacimiento) === 0;
+const unpaidOf = pid => sessionsOf(pid).filter(s => !isPaid(s));
+const unpaidTotal = list => list.reduce((t, s) => t + (Number(s.valor) || 0), 0);
 const S = {
   settings: { ...DEFAULTS },
   patients: [], sessions: [], aliases: {},
@@ -192,6 +209,8 @@ const patientPayload = p => ({
   id: p.id, nombre: p.nombre, ci: p.ci, telefono: p.telefono,
   emergenciaNombre: p.emergenciaNombre, emergenciaTel: p.emergenciaTel,
   valor: p.valor, valorActualizado: p.valorActualizado,
+  email: p.email || '', cobertura: p.cobertura || '', psiquiatra: p.psiquiatra || '', medicacion: p.medicacion || '',
+  fechaNacimiento: p.fechaNacimiento || '',
 });
 
 async function syncAll({ manual = false } = {}) {
@@ -326,7 +345,7 @@ function openSign(pid, ev = null) { S.mode = 'patient'; go('sign', { pid, ev });
 function render() {
   const app = $('#app');
   if (!S.settings.pinHash) return renderOnboarding(app);
-  if (S.mode === 'patient') return S.view === 'sign' ? renderSign(app) : renderHome(app);
+  if (S.mode === 'patient') return S.view === 'sign' ? renderSign(app) : S.view === 'portal' ? renderPortal(app) : renderHome(app);
   renderPro(app);
 }
 
@@ -380,7 +399,7 @@ function heroHTML(st) {
   const first = st.p ? esc(st.p.nombre.split(/\s+/)[0]) : '';
   if (st.kind === 'due') return `<section class="hero due">
       <p class="eyebrow">Tu sesión · ${hhmm(evStart(st.ev))} a ${hhmm(evEnd(st.ev))}</p>
-      <h1>Hola, ${first}</h1>
+      <h1>${cumpleHoy(st.p) ? '¡Feliz cumpleaños, ' + first + '!' : 'Hola, ' + first}</h1>
       <p>Antes de empezar, firmá tu asistencia de hoy.</p>
       <button class="btn primary big" data-act="sign-now">${icon('pen')} Firmar asistencia</button></section>`;
   if (st.kind === 'signed') return `<section class="hero">
@@ -404,6 +423,7 @@ function renderHome(app) {
       <div class="clock" id="clock">${hhmm(now)}</div>
       <div class="today" id="today">${fmtLong(now)}</div>
       <div id="hero" style="width:100%;display:flex;justify-content:center">${heroHTML(st)}</div>
+      <button class="btn soft my-btn" data-act="portal-login">${icon('user')} Mis consultas y pagos</button>
     </main>
     <footer class="kiosk-foot">Tomate un momento para vos</footer>
   </div>`;
@@ -521,7 +541,7 @@ async function confirmSign() {
   S.pad.destroy(); S.pad = null;
   const first = esc(p.nombre.split(/\s+/)[0]);
   const ov = document.createElement('div'); ov.className = 'thanks';
-  ov.innerHTML = `<div class="check-bubble">${icon('check')}</div><h1>¡Gracias, ${first}!</h1><p>Tu firma del ${fmtDMY(s.fecha)} quedó guardada.<br>Que tengas una linda sesión.</p>`;
+  ov.innerHTML = `<div class="check-bubble">${icon('check')}</div><h1>¡Gracias, ${first}!</h1><p>Tu firma del ${fmtDMY(s.fecha)} quedó guardada.<br>${cumpleHoy(p) ? '¡Y feliz cumpleaños! Que tengas un hermoso día.' : 'Que tengas una linda sesión.'}</p>`;
   document.body.appendChild(ov);
   syncAll();
   setTimeout(() => { ov.remove(); go('home'); }, 4000);
@@ -574,6 +594,7 @@ function viewToday(main) {
       <div class="ev-time"><strong>${hhmm(evStart(ev))}</strong><span>${hhmm(evEnd(ev))}</span></div>
       <div><div class="ev-title">${esc(ev.title || '(sin título)')}</div>
         ${isNow ? `<span class="chip now">${icon('clock')} Ahora</span> ` : ''}
+        ${cumpleHoy(p) ? `<span class="chip bday">${icon('cake')} Cumple años hoy</span> ` : ''}
         ${p ? `<span class="chip ok">${icon('user')} ${esc(p.nombre)}</span>` : `<span class="chip warn">${icon('info')} Sin ficha vinculada</span>`}</div>
       <div class="ev-actions">
         ${s ? `<span class="badge-ok">${icon('check')} Firmó ${esc(s.hora)}</span>` : ''}
@@ -604,6 +625,7 @@ function viewPatients(main) {
     <header class="page-head"><div><p class="eyebrow">Fichas</p><h1>Pacientes</h1></div>
       <div class="actions"><div class="search">${icon('search')}<input id="q" type="search" placeholder="Buscar por nombre o cédula" value="${esc(S.params.q || '')}"></div>
       <button class="btn primary" data-act="new-patient">${icon('plus')} Nuevo paciente</button></div></header>
+    ${cumplesSemana()}
     <div id="plist"></div>`;
   const draw = () => {
     const q = norm($('#q').value); const qd = ciDigits($('#q').value);
@@ -611,28 +633,50 @@ function viewPatients(main) {
     $('#plist').innerHTML = list.length ? `<div class="p-grid">${list.map(p => {
       const ss = sessionsOf(p.id);
       return `<button class="p-card" data-act="open-patient" data-pid="${p.id}">${avatar(p.nombre)}
-        <div class="grow"><strong>${esc(p.nombre)}</strong><span>${p.ci ? 'CI ' + esc(ciFmt(p.ci)) + ' · ' : ''}${ss.length} sesión${ss.length === 1 ? '' : 'es'}${ss[0] ? ' · última ' + fmtDMY(ss[0].fecha) : ''}</span></div></button>`;
+        <div class="grow"><strong>${esc(p.nombre)}</strong><span>${p.ci ? 'CI ' + esc(ciFmt(p.ci)) + ' · ' : ''}${ss.length} ${ss.length === 1 ? 'sesión' : 'sesiones'}${ss[0] ? ' · última ' + fmtDMY(ss[0].fecha) : ''}</span></div></button>`;
     }).join('')}</div>` : `<div class="card empty">${icon('users')}<p>${S.patients.length ? 'No hay coincidencias.' : 'Todavía no cargaste pacientes.'}</p>${!S.patients.length ? '<button class="btn primary" data-act="new-patient" style="margin-top:14px">Cargar el primero</button>' : ''}</div>`;
   };
   $('#q').addEventListener('input', e => { S.params.q = e.target.value; draw(); });
   draw();
 }
 
+function cumplesSemana() {
+  const list = livePatients().filter(p => p.fechaNacimiento && diasParaCumple(p.fechaNacimiento) <= 7)
+    .sort((a, b) => diasParaCumple(a.fechaNacimiento) - diasParaCumple(b.fechaNacimiento));
+  if (!list.length) return '';
+  const cuando = n => n === 0 ? 'hoy' : n === 1 ? 'mañana' : `en ${n} días`;
+  return `<div class="note peach">${icon('cake')}<div class="grow"><strong>Cumpleaños de esta semana</strong>
+    <p>${list.map(p => `<button class="linkish" data-act="open-patient" data-pid="${p.id}">${esc(p.nombre)}</button> · ${fmtDMY(p.fechaNacimiento).slice(0, 5)} (${cuando(diasParaCumple(p.fechaNacimiento))}, cumple ${edad(p.fechaNacimiento) + (diasParaCumple(p.fechaNacimiento) === 0 ? 0 : 1)})`).join('<br>')}</p></div></div>`;
+}
 function patientForm(p = null, prefill = {}) {
-  const d = p || { nombre: prefill.nombre || '', ci: '', telefono: '', emergenciaNombre: '', emergenciaTel: '', valor: '' };
+  const d = p || { nombre: prefill.nombre || '', ci: '', fechaNacimiento: '', telefono: '', email: '', emergenciaNombre: '', emergenciaTel: '', cobertura: '', psiquiatra: '', medicacion: '', valor: '' };
   return new Promise(res => {
     openModal(`<h2>${p ? 'Editar ficha' : 'Nuevo paciente'}</h2>
       <form id="pf" autocomplete="off">
-        <div class="field"><label>Nombre y apellido *</label><input name="nombre" required value="${esc(d.nombre)}"></div>
+        <p class="form-sec">Datos personales</p>
+        <div class="field"><label for="pf-nombre">Nombre y apellido *</label><input id="pf-nombre" name="nombre" required value="${esc(d.nombre)}"></div>
         <div class="row2">
-          <div class="field"><label>Cédula de identidad</label><input name="ci" inputmode="numeric" placeholder="1.234.567-8" value="${esc(ciFmt(d.ci))}"><span class="hint" id="ci-hint"></span></div>
-          <div class="field"><label>Teléfono</label><input name="telefono" type="tel" inputmode="tel" placeholder="09X XXX XXX" value="${esc(d.telefono)}"></div>
+          <div class="field"><label for="pf-ci">Cédula de identidad</label><input id="pf-ci" name="ci" inputmode="numeric" placeholder="1.234.567-8" value="${esc(ciFmt(d.ci))}"><span class="hint" id="ci-hint"></span></div>
+          <div class="field"><label for="pf-tel">Teléfono</label><input id="pf-tel" name="telefono" type="tel" inputmode="tel" placeholder="09X XXX XXX" value="${esc(d.telefono)}"></div>
         </div>
         <div class="row2">
-          <div class="field"><label>Contacto de emergencia</label><input name="emergenciaNombre" placeholder="Nombre y vínculo" value="${esc(d.emergenciaNombre)}"></div>
-          <div class="field"><label>Tel. de emergencia</label><input name="emergenciaTel" type="tel" inputmode="tel" value="${esc(d.emergenciaTel)}"></div>
+          <div class="field"><label for="pf-nac">Fecha de nacimiento</label><input id="pf-nac" name="fechaNacimiento" type="date" min="1900-01-01" max="${isoDate()}" value="${esc(d.fechaNacimiento || '')}"></div>
+          <div class="field"><label for="pf-mail">Mail</label><input id="pf-mail" name="email" type="email" inputmode="email" placeholder="nombre@correo.com" value="${esc(d.email || '')}"></div>
         </div>
-        <div class="field"><label>Valor de la consulta</label><div class="prefix"><span>$</span><input name="valor" inputmode="numeric" placeholder="0" value="${d.valor ?? ''}"></div>
+        <div class="row2">
+          <div class="field"><label for="pf-en">Contacto de emergencia</label><input id="pf-en" name="emergenciaNombre" placeholder="Nombre y vínculo" value="${esc(d.emergenciaNombre)}"></div>
+          <div class="field"><label for="pf-et">Tel. de emergencia</label><input id="pf-et" name="emergenciaTel" type="tel" inputmode="tel" value="${esc(d.emergenciaTel)}"></div>
+        </div>
+        <p class="form-sec">Salud</p>
+        <div class="row2">
+          <div class="field"><label for="pf-cob">Institución médica</label><input id="pf-cob" name="cobertura" list="coberturas" placeholder="Ej: CASMU, ASSE o Particular" value="${esc(d.cobertura || '')}">
+            <datalist id="coberturas">${COBERTURAS.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+            <span class="hint">Si no tiene, poné «Particular».</span></div>
+          <div class="field"><label for="pf-psq">Psiquiatra tratante</label><input id="pf-psq" name="psiquiatra" placeholder="Nombre y teléfono" value="${esc(d.psiquiatra || '')}"></div>
+        </div>
+        <div class="field"><label for="pf-med">Medicación actual</label><textarea id="pf-med" name="medicacion" rows="3" placeholder="Medicamento, dosis y horario">${esc(d.medicacion || '')}</textarea></div>
+        <p class="form-sec">Consulta</p>
+        <div class="field"><label for="pf-val">Valor de la consulta</label><div class="prefix"><span>$</span><input id="pf-val" name="valor" inputmode="numeric" placeholder="0" value="${d.valor ?? ''}"></div>
           ${p ? '<span class="hint">Si lo cambiás, se guarda en el historial con la fecha de hoy.</span>' : ''}</div>
         <div class="modal-actions">
           ${p ? `<button type="button" class="btn danger" id="pf-del">${icon('trash')} Eliminar</button><span class="spacer"></span>` : ''}
@@ -652,6 +696,7 @@ function patientForm(p = null, prefill = {}) {
           const v = Object.fromEntries(new FormData(f));
           v.nombre = v.nombre.trim().replace(/\s+/g, ' ');
           if (!v.nombre) return;
+          ['fechaNacimiento', 'email', 'cobertura', 'psiquiatra', 'medicacion', 'telefono', 'emergenciaNombre', 'emergenciaTel'].forEach(k => { v[k] = String(v[k] || '').trim(); });
           v.ci = ciDigits(v.ci) ? ciFmt(v.ci) : '';
           const num = String(v.valor).replace(/[^\d]/g, ''); v.valor = num ? Number(num) : null;
           closeModal(); res(v);
@@ -685,6 +730,36 @@ async function newPatient(prefill = {}, linkEvent = null) {
 }
 
 /* --------- Ficha --------- */
+const telLink = t => t ? `<a href="tel:${esc(t.replace(/\s/g, ''))}">${esc(t)}</a>` : '—';
+function infoCards(p, { pro = false } = {}) {
+  return `<div class="info-grid">
+      <div class="info sky">${icon('id')}<span class="label">Cédula</span><strong>${esc(p.ci || '—')}</strong></div>
+      <div class="info butter">${icon('cake')}<span class="label">Fecha de nacimiento</span><strong>${p.fechaNacimiento ? fmtDMY(p.fechaNacimiento) : '—'}</strong>
+        ${p.fechaNacimiento ? `<small>${edad(p.fechaNacimiento)} años</small>` : ''}${cumpleHoy(p) ? `<span class="pay bday">${icon('cake')} ¡Hoy cumple años!</span>` : ''}</div>
+      <div class="info sage">${icon('phone')}<span class="label">Teléfono</span><strong>${telLink(p.telefono)}</strong></div>
+      <div class="info lav">${icon('mail')}<span class="label">Mail</span><strong class="wrap">${p.email ? (pro ? `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>` : esc(p.email)) : '—'}</strong></div>
+      <div class="info rose">${icon('heart')}<span class="label">Contacto de emergencia</span><strong>${esc(p.emergenciaNombre || '—')}</strong>
+        ${p.emergenciaTel ? `<small>${telLink(p.emergenciaTel)}</small>` : ''}</div>
+      <div class="info peach">${icon('hospital')}<span class="label">Institución médica</span><strong>${esc(p.cobertura || '—')}</strong></div>
+      <div class="info sky">${icon('stetho')}<span class="label">Psiquiatra tratante</span><strong>${esc(p.psiquiatra || '—')}</strong></div>
+      <div class="info butter">${icon('coin')}<span class="label">Valor de la consulta</span><strong>${money(p.valor)}</strong>
+        <small>${p.valorActualizado ? 'Actualizado el ' + fmtDMY(p.valorActualizado) : 'Sin valor cargado'}</small>
+        ${pro ? `<button class="btn small" data-act="update-fee" data-pid="${p.id}">Actualizar valor</button>` : ''}</div>
+      <div class="info sage full">${icon('pill')}<span class="label">Medicación actual</span><p class="med">${p.medicacion ? esc(p.medicacion) : '—'}</p></div>
+    </div>`;
+}
+function payBadge(s) {
+  return isPaid(s)
+    ? `<span class="pay ok">${icon('check')} Pagada el ${fmtDMY(s.pago.fecha)}${s.pago.medio ? ' · ' + esc(s.pago.medio) : ''}</span>`
+    : `<span class="pay due">${icon('clock')} Pendiente de pago</span>`;
+}
+function unpaidSummary(pid) {
+  const u = unpaidOf(pid); const tot = unpaidTotal(u);
+  if (!sessionsOf(pid).length) return '';
+  return u.length
+    ? `<div class="note butter">${icon('coin')}<div class="grow"><strong>${u.length} consulta${u.length === 1 ? '' : 's'} sin pagar${tot ? ' · ' + money(tot) : ''}</strong><p>${u.map(s => fmtDMY(s.fecha)).slice(0, 6).join(', ')}${u.length > 6 ? '…' : ''}</p></div></div>`
+    : `<div class="note sage">${icon('check')}<div class="grow"><strong>Todas las consultas están pagas</strong></div></div>`;
+}
 function viewPatient(main) {
   const p = patientById(S.params.pid); if (!p) { go('patients'); return; }
   const ss = sessionsOf(p.id);
@@ -693,29 +768,118 @@ function viewPatient(main) {
     <button class="back" data-nav="patients">${icon('back')} Pacientes</button>
     <header class="ficha-head">${avatar(p.nombre, 'xl')}
       <div class="grow"><p class="eyebrow">Ficha del paciente</p><h1>${esc(p.nombre)}</h1>
-        <p class="muted">${ss.length} sesión${ss.length === 1 ? '' : 'es'} firmada${ss.length === 1 ? '' : 's'}${ss[0] ? ' · última el ' + fmtDMY(ss[0].fecha) : ''}</p></div>
+        <p class="muted">${ss.length} ${ss.length === 1 ? 'sesión firmada' : 'sesiones firmadas'}${ss[0] ? ' · última el ' + fmtDMY(ss[0].fecha) : ''}</p></div>
       <div class="actions">
         <button class="btn primary" data-act="sign-for" data-pid="${p.id}">${icon('pen')} Pasar a firma</button>
         <button class="btn soft" data-act="edit-patient" data-pid="${p.id}">${icon('edit')} Editar</button>
         <button class="btn soft" data-act="print-patient" data-pid="${p.id}">${icon('print')} PDF</button>
       </div></header>
-    <div class="info-grid">
-      <div class="info sky">${icon('id')}<span class="label">Cédula</span><strong>${esc(p.ci || '—')}</strong></div>
-      <div class="info sage">${icon('phone')}<span class="label">Teléfono</span><strong>${p.telefono ? `<a href="tel:${esc(p.telefono.replace(/\s/g, ''))}">${esc(p.telefono)}</a>` : '—'}</strong></div>
-      <div class="info rose">${icon('heart')}<span class="label">Contacto de emergencia</span><strong>${esc(p.emergenciaNombre || '—')}</strong>
-        ${p.emergenciaTel ? `<small><a href="tel:${esc(p.emergenciaTel.replace(/\s/g, ''))}">${esc(p.emergenciaTel)}</a></small>` : ''}</div>
-      <div class="info butter">${icon('coin')}<span class="label">Valor de la consulta</span><strong>${money(p.valor)}</strong>
-        <small>${p.valorActualizado ? 'Actualizado el ' + fmtDMY(p.valorActualizado) : 'Sin valor cargado'}</small>
-        <button class="btn small" data-act="update-fee" data-pid="${p.id}">Actualizar valor</button></div>
-    </div>
+    ${infoCards(p, { pro: true })}
     ${hist.length > 1 ? `<details class="card" style="margin-bottom:24px"><summary>Historial de valores</summary><table class="fee-hist">${hist.map(h => `<tr><td>${fmtDMY(h.fecha)}</td><td style="text-align:right"><strong>${money(h.valor)}</strong></td></tr>`).join('')}</table></details>` : ''}
-    <div class="section-title"><h2>Sesiones firmadas</h2></div>
-    ${ss.length ? `<div class="s-grid">${ss.map(s => `<div class="s-card">
+    <div class="section-title"><h2>Sesiones y pagos</h2></div>
+    ${unpaidSummary(p.id)}
+    ${ss.length ? `<div class="s-grid">${ss.map(s => `<div class="s-card ${isPaid(s) ? 'paid' : ''}">
       <div class="top"><div><strong>${fmtDMY(s.fecha)}</strong><div class="meta">${esc(s.hora)} hs${s.valor != null ? ' · ' + money(s.valor) : ''}</div></div>
         <button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar firma">${icon('trash')}</button></div>
       <img src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">
-      <span class="cloud ${s.sync === 'ok' ? 'ok' : 'pending'}">${icon('cloud')} ${s.sync === 'ok' ? (s.driveUrl ? `<a href="${esc(s.driveUrl)}" target="_blank" rel="noopener" style="color:inherit">En Drive</a>` : 'En Drive') : 'Pendiente de subir'}</span>
+      ${payBadge(s)}
+      ${isPaid(s) && s.pago.por === 'paciente' ? '<span class="meta">Registrado por el paciente</span>' : ''}
+      <div class="s-foot">
+        <button class="btn small ${isPaid(s) ? 'soft' : 'peach'}" data-act="pay" data-sid="${s.id}" data-by="profesional">${isPaid(s) ? 'Editar pago' : 'Registrar pago'}</button>
+        <span class="cloud ${s.sync === 'ok' ? 'ok' : 'pending'}">${icon('cloud')} ${s.sync === 'ok' ? (s.driveUrl ? `<a href="${esc(s.driveUrl)}" target="_blank" rel="noopener" style="color:inherit">En Drive</a>` : 'En Drive') : 'Pendiente de subir'}</span>
+      </div>
     </div>`).join('')}</div>` : `<div class="card empty">${icon('pen')}<p>Todavía no hay firmas.</p></div>`}`;
+}
+
+/* --------- Registrar pago (paciente o profesional) --------- */
+function openPayment(sid, by) {
+  const s = S.sessions.find(x => x.id === sid); if (!s) return;
+  const cur = s.pago || {};
+  const canClear = by === 'profesional' && isPaid(s);
+  openModal(`<h2>Registrar pago</h2>
+    <p class="muted">Consulta del <strong>${fmtDMY(s.fecha)}</strong>${s.valor != null ? ' · ' + money(s.valor) : ''}</p>
+    <form id="payf">
+      <div class="field"><label for="pay-fecha">Fecha de pago</label><input id="pay-fecha" name="fecha" type="date" required max="${isoDate()}" value="${esc(cur.fecha || isoDate())}"></div>
+      <div class="field"><label>Medio de pago</label>
+        <div class="chips" role="radiogroup" aria-label="Medio de pago">${MEDIOS.map((m, i) => `<label class="chip-opt"><input type="radio" name="medio" value="${esc(m)}" ${(cur.medio ? cur.medio === m : i === 1) ? 'checked' : ''}><span>${esc(m)}</span></label>`).join('')}</div></div>
+      <div class="modal-actions">
+        ${canClear ? `<button type="button" class="btn danger" id="pay-clear">Quitar pago</button><span class="spacer"></span>` : ''}
+        <button type="button" class="btn ghost" id="pay-cancel">Cancelar</button>
+        <button type="submit" class="btn primary">${icon('check')} Guardar pago</button>
+      </div>
+    </form>`, {
+    onMount: m => {
+      $('#pay-cancel', m).onclick = closeModal;
+      const save = async pago => {
+        s.pago = pago; s.sync = 'pending'; await DB.put('sessions', s);
+        closeModal(); render(); toast(pago ? 'Pago registrado' : 'Pago quitado', 'ok'); syncAll();
+      };
+      if (canClear) $('#pay-clear', m).onclick = () => save(null);
+      $('#payf', m).onsubmit = e => {
+        e.preventDefault(); const f = e.target;
+        if (!f.fecha.value) return;
+        save({ fecha: f.fecha.value, medio: (f.querySelector('[name=medio]:checked') || {}).value || '', por: by, registrado: new Date().toISOString() });
+      };
+    },
+  });
+}
+
+/* --------- Portal del paciente: "Mis consultas" --------- */
+function findPatientLogin(q) {
+  const d = ciDigits(q);
+  if (d.length >= 6) {
+    const list = livePatients().filter(p => ciDigits(p.ci) && ciDigits(p.ci).padStart(8, '0') === d.padStart(8, '0'));
+    if (list.length === 1) return { p: list[0] };
+    return { err: 'No encontramos esa cédula. Revisala o avisale a tu terapeuta.' };
+  }
+  if (!S.settings.allowNameLogin) return { err: 'Ingresá tu cédula, sin puntos ni guion.' };
+  const qt = tokens(q);
+  if (qt.length < 2) return { err: 'Escribí tu nombre y apellido, o tu cédula.' };
+  const list = livePatients().filter(p => { const nt = new Set(tokens(p.nombre)); return qt.every(t => nt.has(t)); });
+  if (list.length === 1) return { p: list[0] };
+  if (list.length > 1) return { err: 'Hay más de una persona con ese nombre. Ingresá tu cédula.' };
+  return { err: 'No encontramos ese nombre. Probá con tu cédula.' };
+}
+function portalLogin() {
+  openModal(`<div style="text-align:center"><h2>Mis consultas</h2><p class="muted">${S.settings.allowNameLogin ? 'Escribí tu cédula o tu nombre y apellido.' : 'Escribí tu cédula, sin puntos ni guion.'}</p></div>
+    <form id="plf" autocomplete="off">
+      <div class="field"><label for="pl-q">${S.settings.allowNameLogin ? 'Cédula o nombre y apellido' : 'Cédula'}</label><input id="pl-q" name="q" required ${S.settings.allowNameLogin ? '' : 'inputmode="numeric"'} autocomplete="off"></div>
+      <p class="pin-msg" id="pl-err" style="margin-top:10px"></p>
+      <div class="modal-actions"><button type="button" class="btn ghost" id="pl-cancel">Cancelar</button><button class="btn primary">Entrar</button></div>
+    </form>`, {
+    onMount: m => {
+      $('#pl-cancel', m).onclick = closeModal;
+      setTimeout(() => $('#pl-q', m).focus(), 60);
+      $('#plf', m).onsubmit = e => {
+        e.preventDefault();
+        const r = findPatientLogin(e.target.q.value);
+        if (r.err) { $('#pl-err', m).textContent = r.err; return; }
+        S.lastActivity = Date.now(); go('portal', { pid: r.p.id });
+      };
+    },
+  });
+}
+function renderPortal(app) {
+  const p = patientById(S.params.pid); if (!p) { go('home'); return; }
+  const ss = sessionsOf(p.id); const first = esc(p.nombre.split(/\s+/)[0]);
+  app.innerHTML = `<div class="portal">
+    <header class="sign-top">
+      <button class="btn soft" data-act="portal-exit">${icon('back')} Salir</button>
+      <div class="brand">${icon('leaf')}<span>Mis consultas</span></div>
+      <span class="portal-spacer"></span>
+    </header>
+    <section class="portal-hello">${avatar(p.nombre, 'lg')}<div><p class="eyebrow">Tu ficha</p><h1>${cumpleHoy(p) ? '¡Feliz cumpleaños, ' + first + '!' : 'Hola, ' + first}</h1></div></section>
+    ${unpaidSummary(p.id)}
+    <div class="section-title"><h2>Tus consultas</h2></div>
+    ${ss.length ? `<div class="pay-list">${ss.map(s => `<div class="pay-row ${isPaid(s) ? 'paid' : ''}">
+        <div class="pay-date"><strong>${fmtDMY(s.fecha)}</strong><span>${esc(s.hora)} hs${s.valor != null ? ' · ' + money(s.valor) : ''}</span></div>
+        <div class="pay-state">${payBadge(s)}</div>
+        ${isPaid(s) ? '' : `<button class="btn primary" data-act="pay" data-sid="${s.id}" data-by="paciente">Registrar pago</button>`}
+      </div>`).join('')}</div>` : `<div class="card empty">${icon('cal')}<p>Todavía no tenés consultas registradas.</p></div>`}
+    <details class="card portal-data"><summary>Ver mis datos</summary>${infoCards(p)}
+      <p class="muted small">Si algún dato no está bien, avisale a tu terapeuta para corregirlo.</p></details>
+    <p class="muted small" style="text-align:center">Por privacidad, esta pantalla se cierra sola a los ${S.settings.portalMin || 2} minutos sin uso.</p>
+  </div>`;
 }
 
 function printPatient(p) {
@@ -725,11 +889,15 @@ function printPatient(p) {
     <h1>${esc(p.nombre)}</h1>
     <div class="pr-meta">
       <div><b>Cédula:</b> ${esc(p.ci || '—')}</div><div><b>Teléfono:</b> ${esc(p.telefono || '—')}</div>
+      <div><b>Fecha de nacimiento:</b> ${p.fechaNacimiento ? fmtDMY(p.fechaNacimiento) + ' (' + edad(p.fechaNacimiento) + ' años)' : '—'}</div>
+      <div><b>Mail:</b> ${esc(p.email || '—')}</div>
       <div><b>Contacto de emergencia:</b> ${esc(p.emergenciaNombre || '—')} ${esc(p.emergenciaTel || '')}</div>
+      <div><b>Institución médica:</b> ${esc(p.cobertura || '—')}</div><div><b>Psiquiatra tratante:</b> ${esc(p.psiquiatra || '—')}</div>
+      <div style="grid-column:1/-1"><b>Medicación actual:</b> ${esc(p.medicacion || '—')}</div>
       <div><b>Valor de la consulta:</b> ${money(p.valor)}${p.valorActualizado ? ' (desde ' + fmtDMY(p.valorActualizado) + ')' : ''}</div>
     </div>
-    <table><thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Valor</th><th>Firma</th></tr></thead>
-    <tbody>${ss.map((s, i) => `<tr><td>${i + 1}</td><td>${fmtDMY(s.fecha)}</td><td>${esc(s.hora)}</td><td>${s.valor != null ? money(s.valor) : '—'}</td><td><img src="${s.firma}"></td></tr>`).join('')}</tbody></table>
+    <table><thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Valor</th><th>Pago</th><th>Firma</th></tr></thead>
+    <tbody>${ss.map((s, i) => `<tr><td>${i + 1}</td><td>${fmtDMY(s.fecha)}</td><td>${esc(s.hora)}</td><td>${s.valor != null ? money(s.valor) : '—'}</td><td>${isPaid(s) ? fmtDMY(s.pago.fecha) + (s.pago.medio ? '<br><small>' + esc(s.pago.medio) + '</small>' : '') : 'Pendiente'}</td><td><img src="${s.firma}"></td></tr>`).join('')}</tbody></table>
     <p style="color:#888;margin-top:14pt;font-size:9pt">Generado el ${fmtDMY(isoDate())} ${hhmm(new Date())}</p>`;
   setTimeout(() => window.print(), 200);
 }
@@ -756,6 +924,7 @@ function viewSettings(main) {
         <label class="switch"><span>Abrir la firma sola según el calendario<small>Cuando empieza la sesión, se abre la pantalla de firma del paciente.</small></span><input type="checkbox" id="s-auto" ${st.autoOpen ? 'checked' : ''}></label>
         <div class="field"><label>Abrir cuántos minutos antes de la sesión</label>
           <select id="s-pre">${[0, 5, 10, 15, 20, 30].map(n => `<option value="${n}" ${+st.preMin === n ? 'selected' : ''}>${n ? n + ' minutos antes' : 'A la hora exacta'}</option>`).join('')}</select></div>
+        <label class="switch"><span>Entrar a «Mis consultas» con el nombre<small>Si lo apagás, el paciente tiene que poner su cédula. Es más seguro: con el nombre, cualquiera que lo sepa puede ver los datos de otro paciente.</small></span><input type="checkbox" id="s-namelogin" ${st.allowNameLogin ? 'checked' : ''}></label>
         <label class="switch"><span>Mantener la pantalla encendida<small>En modo paciente la tablet no se apaga sola.</small></span><input type="checkbox" id="s-wake" ${st.wakeLock ? 'checked' : ''}></label>
         <div class="field"><label>Volver a modo paciente tras inactividad</label>
           <select id="s-lock">${[1, 2, 3, 5, 10].map(n => `<option value="${n}" ${+st.lockMin === n ? 'selected' : ''}>${n} minuto${n > 1 ? 's' : ''}</option>`).join('')}</select></div>
@@ -780,7 +949,7 @@ function viewSettings(main) {
       </div>
     </div>`;
   const bind = (id, key, fn = v => v) => $(id).addEventListener('change', async e => { st[key] = fn(e.target.type === 'checkbox' ? e.target.checked : e.target.value); await saveSettings(); toast('Guardado', 'ok'); });
-  bind('#s-auto', 'autoOpen'); bind('#s-wake', 'wakeLock'); bind('#s-pre', 'preMin', Number); bind('#s-lock', 'lockMin', Number); bind('#s-name', 'consultorio', v => v.trim());
+  bind('#s-auto', 'autoOpen'); bind('#s-namelogin', 'allowNameLogin'); bind('#s-wake', 'wakeLock'); bind('#s-pre', 'preMin', Number); bind('#s-lock', 'lockMin', Number); bind('#s-name', 'consultorio', v => v.trim());
   $('#s-import').addEventListener('change', async e => {
     const f = e.target.files[0]; if (!f) return;
     try { const r = await importData(JSON.parse(await f.text())); toast(`Importado: ${r.p} pacientes, ${r.s} firmas nuevas`, 'ok'); syncAll(); }
@@ -793,6 +962,9 @@ function viewSettings(main) {
 const findEvent = id => S.events.find(e => e.id === id);
 const ACTIONS = {
   'pro': () => enterPro(),
+  'portal-login': () => portalLogin(),
+  'portal-exit': () => go('home'),
+  'pay': el => openPayment(el.dataset.sid, el.dataset.by),
   'exit-pro': () => exitPro(),
   'sign-now': () => { const st = homeState(); if (st.p) openSign(st.p.id, st.ev); },
   'cancel-sign': () => { if (S.params.ev) S.dismissed[S.params.ev.id] = true; S.pad?.destroy(); S.pad = null; go('home'); },
@@ -910,6 +1082,7 @@ document.addEventListener('click', e => {
 function handleBack() {
   if ($('.modal-back')) { closeModal(); return; }
   if (S.mode === 'patient' && S.view === 'sign') { ACTIONS['cancel-sign'](); return; }
+  if (S.mode === 'patient' && S.view === 'portal') { go('home'); return; }
   if (S.mode === 'pro' && S.view === 'patient') { go('patients'); return; }
   if (S.mode === 'pro') { exitPro(); }
 }
@@ -934,6 +1107,7 @@ function tick() {
   if (today !== lastDay) { lastDay = today; S.dismissed = {}; S.events = []; loadEvents(true); }
   if (S.mode === 'patient' && S.view === 'home') tickHome();
   if (S.mode === 'pro' && Date.now() - S.lastActivity > (S.settings.lockMin || 3) * 60e3) exitPro();
+  if (S.mode === 'patient' && S.view === 'portal' && Date.now() - S.lastActivity > (S.settings.portalMin || 2) * 60e3) go('home');
 }
 
 /* ---------------- arranque ---------------- */
