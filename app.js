@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -451,15 +451,19 @@ function renderSign(app) {
 class SignaturePad {
   constructor(canvas, onChange) {
     this.c = canvas; this.ctx = canvas.getContext('2d'); this.strokes = []; this.cur = null; this.onChange = onChange;
+    this.dpr = Math.min(2, window.devicePixelRatio || 1); this.w = 0; this.h = 0; this.raf = 0;
     this.resize = this.resize.bind(this); this.resize();
-    this.ro = new ResizeObserver(this.resize); this.ro.observe(canvas);
+    this.ro = new ResizeObserver(() => { cancelAnimationFrame(this.raf); this.raf = requestAnimationFrame(this.resize); });
+    this.ro.observe(canvas);
     canvas.addEventListener('pointerdown', e => this.down(e));
     canvas.addEventListener('pointermove', e => this.move(e));
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => canvas.addEventListener(t, e => this.up(e)));
   }
   resize() {
-    const r = this.c.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
-    if (!r.width) return;
+    const r = this.c.getBoundingClientRect(); const dpr = this.dpr;
+    const w = Math.round(r.width), h = Math.round(r.height);
+    if (!w || !h || (w === this.w && h === this.h)) return;
+    this.w = w; this.h = h;
     this.c.width = Math.round(r.width * dpr); this.c.height = Math.round(r.height * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); this.redraw();
   }
@@ -491,7 +495,7 @@ class SignaturePad {
   isEmpty() { return !this.strokes.some(s => s.length > 2) && this.strokes.length < 3; }
   toPNG(maxW = 640) {
     const pts = this.strokes.flat(); if (!pts.length) return null;
-    const dpr = window.devicePixelRatio || 1, padd = 14;
+    const dpr = this.dpr, padd = 14;
     let x0 = Math.min(...pts.map(p => p.x)) - padd, y0 = Math.min(...pts.map(p => p.y)) - padd;
     let x1 = Math.max(...pts.map(p => p.x)) + padd, y1 = Math.max(...pts.map(p => p.y)) + padd;
     x0 = Math.max(0, x0); y0 = Math.max(0, y0);
@@ -501,7 +505,7 @@ class SignaturePad {
     o.drawImage(this.c, x0 * dpr, y0 * dpr, w * dpr, h * dpr, 0, 0, out.width, out.height);
     return out.toDataURL('image/png');
   }
-  destroy() { this.ro.disconnect(); }
+  destroy() { cancelAnimationFrame(this.raf); this.ro.disconnect(); }
 }
 
 async function confirmSign() {
