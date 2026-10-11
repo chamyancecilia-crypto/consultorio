@@ -313,6 +313,55 @@ details summary{cursor:pointer;font-weight:700;color:var(--ink-soft);padding:6px
   .keypad button{width:70px;height:70px}
 }
 
+
+/* ============ v1.1: ficha ampliada, pagos y portal ============ */
+.form-sec{margin:22px 0 -4px;font-size:.78rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--lav-d)}
+.form-sec:first-child{margin-top:8px}
+.field textarea{min-height:90px;border-radius:var(--r-sm);border:2px solid var(--line);background:#fff;padding:12px 16px;outline:none;resize:vertical;font:inherit;transition:border-color .2s}
+.field textarea:focus{border-color:var(--lav-d)}
+.info.lav{background:var(--lav);color:#4E4380}
+.info.peach{background:var(--peach);color:#7E4A33}
+.info .med{white-space:pre-line;font-weight:700;font-size:1.05rem}
+.info .wrap{overflow-wrap:anywhere;font-size:1.02rem}
+.note.sage{background:var(--sage);color:#3D6650}
+.pay{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 12px;font-size:.84rem;font-weight:800;align-self:flex-start}
+.pay .ic{width:1.05em;height:1.05em}
+.pay.ok{background:var(--sage);color:#3D6650}
+.pay.due{background:var(--butter);color:#6F5B17}
+.s-card.paid{box-shadow:var(--shadow-sm),inset 0 0 0 2px var(--sage)}
+.s-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.chips{display:flex;flex-wrap:wrap;gap:10px}
+.chip-opt{position:relative;cursor:pointer}
+.chip-opt input{position:absolute;opacity:0;pointer-events:none}
+.chip-opt span{display:inline-flex;align-items:center;min-height:48px;padding:0 18px;border-radius:999px;background:#fff;border:2px solid var(--line);font-weight:700;transition:all .15s}
+.chip-opt input:checked + span{background:var(--lav);border-color:var(--lav-d);color:#4E4380}
+.chip-opt input:focus-visible + span{outline:3px solid var(--lav-d);outline-offset:2px}
+.my-btn{margin-top:18px}
+.portal{min-height:100dvh;max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:18px;padding:max(18px,env(safe-area-inset-top)) 28px max(28px,env(safe-area-inset-bottom));animation:rise .4s ease both}
+.portal .note{margin-bottom:0}
+.portal-spacer{width:96px}
+.portal-hello{display:flex;align-items:center;gap:18px}
+.portal-hello h1{font-size:clamp(1.8rem,4vw,2.4rem)}
+.pay-list{display:flex;flex-direction:column;gap:12px}
+.pay-row{display:grid;grid-template-columns:minmax(150px,1fr) 2fr auto;gap:14px;align-items:center;background:rgba(255,255,255,.9);border-radius:var(--r);padding:16px 20px;box-shadow:var(--shadow-sm);border-left:6px solid var(--butter)}
+.pay-row.paid{border-left-color:var(--sage)}
+.pay-date strong{display:block;font-size:1.15rem}
+.pay-date span{color:var(--ink-soft);font-size:.9rem}
+.portal-data summary{font-size:1.05rem;color:var(--ink)}
+.portal-data .info-grid{margin:16px 0 10px}
+@media (max-width:700px){
+  .info.wide{grid-column:auto}
+  .pay-row{grid-template-columns:1fr}
+  .portal{padding-left:18px;padding-right:18px}
+  .portal-spacer{display:none}
+}
+
+.info.full{grid-column:1/-1}
+.pay.bday,.chip.bday{background:var(--peach);color:#7E4A33}
+.pay.bday{margin-top:6px}
+.note.peach{background:var(--peach);color:#7E4A33}
+.linkish{border:0;background:none;padding:0;font:inherit;font-weight:800;color:inherit;text-decoration:underline;cursor:pointer}
+
 /* ============ IMPRESIÓN ============ */
 @media print{
   body{background:#fff;font-size:12pt}
