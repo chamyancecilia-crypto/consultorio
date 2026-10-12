@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -98,7 +98,7 @@ const DB = {
 /* ---------------- estado ---------------- */
 const DEFAULTS = {
   consultorio: '', scriptUrl: '', token: '',
-  autoOpen: true, preMin: 10, lockMin: 3, wakeLock: true,
+  autoOpen: false, preMin: 10, lockMin: 3, wakeLock: true,
   pinHash: null, pinSalt: null, lastBackup: null,
   allowNameLogin: true, portalMin: 2,
 };
@@ -121,7 +121,7 @@ const unpaidTotal = list => list.reduce((t, s) => t + (Number(s.valor) || 0), 0)
 const S = {
   settings: { ...DEFAULTS },
   patients: [], sessions: [], aliases: {},
-  events: [], eventsDate: null, eventsUpdated: 0, eventsError: null, calName: '',
+  events: [], eventsDate: null, eventsUpdated: 0, eventsError: null, calName: '', loadedWeeks: new Set(), loadingWeek: null,
   mode: 'patient', view: 'home', params: {},
   dismissed: {}, lastActivity: Date.now(),
   syncing: false, syncError: null, homeKey: '',
@@ -134,13 +134,25 @@ const sessionsOf = pid => S.sessions.filter(s => s.patientId === pid && !s.delet
 const pendingCount = () => S.patients.filter(p => p.sync !== 'ok').length + S.sessions.filter(s => s.sync !== 'ok').length;
 
 /* ---------------- calendario: emparejar eventos con pacientes ---------------- */
+const CI_RE = /\b\d{1,2}\.?\d{3}\.?\d{3}[-\s]?\d\b/g;
+const MAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 function matchEvent(ev) {
+  if (!ev) return null;
+  const pats = livePatients();
   const key = norm(ev.title);
   if (S.aliases[key]) { const p = patientById(S.aliases[key]); if (p) return p; }
+  const text = `${ev.title || ''}\n${ev.description || ''}`;
+  // 1) cédula en el título o en la descripción del evento
+  const cis = (text.match(CI_RE) || []).map(c => ciDigits(c).padStart(8, '0'));
+  if (cis.length) { const p = pats.find(x => ciDigits(x.ci) && cis.includes(ciDigits(x.ci).padStart(8, '0'))); if (p) return p; }
+  // 2) mail en la descripción o entre los invitados
+  const mails = [...(text.match(MAIL_RE) || []), ...(ev.guests || [])].map(m => String(m).toLowerCase().trim());
+  if (mails.length) { const p = pats.find(x => x.email && mails.includes(x.email.toLowerCase().trim())); if (p) return p; }
+  // 3) nombre y apellido en el título
   const tt = new Set(tokens(ev.title));
   if (!tt.size) return null;
   let best = null, bestScore = 0, tie = false;
-  for (const p of livePatients()) {
+  for (const p of pats) {
     const nt = tokens(p.nombre); if (!nt.length) continue;
     const overlap = nt.filter(t => tt.has(t)).length;
     const need = Math.min(2, nt.length, tt.size);
@@ -153,19 +165,29 @@ function matchEvent(ev) {
 }
 const evStart = ev => new Date(ev.start);
 const evEnd = ev => new Date(ev.end);
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+function mondayOf(d = new Date()) { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return x; }
+const parseISO = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+const sameDay = (ev, iso) => isoDate(evStart(ev)) === iso;
+const todayEvents = () => S.events.filter(e => sameDay(e, isoDate()));
+const preMs = () => (S.settings.preMin || 0) * 60e3;
+const canSignNow = (ev, now = new Date()) => evStart(ev) - preMs() <= now && now <= evEnd(ev);
 function currentEvent(now = new Date()) {
-  const pre = (S.settings.preMin || 0) * 60e3;
-  const list = S.events.filter(e => evStart(e) - pre <= now && now < evEnd(e));
+  const list = todayEvents().filter(e => evStart(e) - preMs() <= now && now < evEnd(e));
   list.sort((a, b) => evStart(b) - evStart(a));
   return list[0] || null;
 }
 function nextEvent(now = new Date()) {
-  return S.events.filter(e => evStart(e) > now).sort((a, b) => evStart(a) - evStart(b))[0] || null;
+  return todayEvents().filter(e => evStart(e) > now).sort((a, b) => evStart(a) - evStart(b))[0] || null;
 }
 function signedFor(ev, p) {
-  const today = isoDate();
-  return S.sessions.find(s => !s.deleted && s.fecha === today && (s.eventId === ev.id || (p && s.patientId === p.id && !s.eventId)));
+  const day = isoDate(evStart(ev));
+  return S.sessions.find(s => !s.deleted && s.fecha === day && (s.eventId === ev.id || (p && s.patientId === p.id && !s.eventId)));
 }
+function citasDe(pid, now = new Date()) {
+  return S.events.filter(e => evEnd(e) >= now && matchEvent(e)?.id === pid).sort((a, b) => evStart(a) - evStart(b)).slice(0, 12);
+}
+const fmtCita = d => cap(new Intl.DateTimeFormat('es-UY', { weekday: 'long', day: 'numeric', month: 'long' }).format(d));
 
 /* ---------------- conexión con Google (Apps Script) ---------------- */
 async function api(action, payload = {}, method = 'POST') {
@@ -192,17 +214,28 @@ async function api(action, payload = {}, method = 'POST') {
   } finally { clearTimeout(t); }
 }
 
+async function fetchRange(from, to) {
+  const r = await api('events', { from: from.toISOString(), to: to.toISOString() }, 'GET');
+  const list = r.events || [];
+  const viejo = addDays(new Date(), -60);
+  S.events = S.events.filter(e => (evEnd(e) <= from || evStart(e) >= to) && evEnd(e) > viejo).concat(list);
+  S.calName = r.calendar || S.calName;
+}
+const saveEvents = () => DB.setKV('events', { v: 2, date: S.eventsDate, list: S.events, updated: S.eventsUpdated, cal: S.calName, weeks: [...S.loadedWeeks] });
 async function loadEvents(force = false) {
-  const today = isoDate();
   if (!S.settings.scriptUrl || !navigator.onLine) return;
-  if (!force && S.eventsDate === today && Date.now() - S.eventsUpdated < 5 * 60e3) return;
-  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
-  const d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+  if (!force && S.eventsDate === isoDate() && Date.now() - S.eventsUpdated < 5 * 60e3) return;
+  const mon = mondayOf();
   try {
-    const r = await api('events', { from: d0.toISOString(), to: d1.toISOString() }, 'GET');
-    S.events = r.events || []; S.eventsDate = today; S.eventsUpdated = Date.now(); S.eventsError = null; S.calName = r.calendar || '';
-    await DB.setKV('events', { date: today, list: S.events, updated: S.eventsUpdated, cal: S.calName });
+    await fetchRange(mon, addDays(mon, 21));   // esta semana y las dos siguientes
+    [0, 7, 14].forEach(n => S.loadedWeeks.add(isoDate(addDays(mon, n))));
+    S.eventsDate = isoDate(); S.eventsUpdated = Date.now(); S.eventsError = null; await saveEvents();
   } catch (e) { S.eventsError = e.message; }
+}
+async function loadWeek(mon) {
+  if (!S.settings.scriptUrl || !navigator.onLine) return;
+  try { await fetchRange(mon, addDays(mon, 7)); S.loadedWeeks.add(isoDate(mon)); S.eventsError = null; await saveEvents(); }
+  catch (e) { S.eventsError = e.message; }
 }
 
 const patientPayload = p => ({
@@ -390,25 +423,26 @@ function homeState() {
   const now = new Date(); const ev = currentEvent(now);
   if (ev) {
     const p = matchEvent(ev);
-    if (p) return { kind: signedFor(ev, p) ? 'signed' : 'due', ev, p };
-    return { kind: 'calm', ev };
+    return { kind: p && signedFor(ev, p) ? 'signed' : 'due', ev, p };
   }
   return { kind: 'calm', next: nextEvent(now) };
 }
+const loginLabel = () => S.settings.allowNameLogin ? 'Ingresar con mi cédula o nombre' : 'Ingresar con mi cédula';
 function heroHTML(st) {
-  const first = st.p ? esc(st.p.nombre.split(/\s+/)[0]) : '';
   if (st.kind === 'due') return `<section class="hero due">
-      <p class="eyebrow">Tu sesión · ${hhmm(evStart(st.ev))} a ${hhmm(evEnd(st.ev))}</p>
-      <h1>${cumpleHoy(st.p) ? '¡Feliz cumpleaños, ' + first + '!' : 'Hola, ' + first}</h1>
-      <p>Antes de empezar, firmá tu asistencia de hoy.</p>
-      <button class="btn primary big" data-act="sign-now">${icon('pen')} Firmar asistencia</button></section>`;
+      <p class="eyebrow">Sesión de las ${hhmm(evStart(st.ev))}</p>
+      <h1>¿Llegaste a tu consulta?</h1>
+      <p>Ingresá para ver tus citas y firmar tu asistencia.</p>
+      <button class="btn primary big" data-act="portal-login">${icon('id')} ${loginLabel()}</button></section>`;
   if (st.kind === 'signed') return `<section class="hero">
       <div class="check-bubble">${icon('check')}</div>
-      <h1>¡Gracias, ${first}!</h1><p>Tu asistencia de hoy ya quedó registrada.</p></section>`;
+      <h1>¡Gracias!</h1><p>La asistencia de esta sesión ya quedó registrada.</p>
+      <button class="btn soft" data-act="portal-login">${icon('id')} Ver mis consultas</button></section>`;
   return `<section class="hero">
       <div class="breath"><span>Inhalá…</span><span>Exhalá…</span></div>
       <h1>Te damos la bienvenida</h1>
-      <p>Ponete cómodo, en un ratito comenzamos.</p>
+      <p>Ponete cómodo. Cuando quieras, ingresá para ver tus citas y firmar.</p>
+      <button class="btn sage big" data-act="portal-login">${icon('id')} ${loginLabel()}</button>
       ${st.next ? `<p class="muted small">Próxima sesión: ${hhmm(evStart(st.next))}</p>` : ''}</section>`;
 }
 function homeKey(st) { return `${st.kind}|${st.ev?.id || ''}|${st.p?.id || ''}|${st.next?.id || ''}`; }
@@ -423,7 +457,6 @@ function renderHome(app) {
       <div class="clock" id="clock">${hhmm(now)}</div>
       <div class="today" id="today">${fmtLong(now)}</div>
       <div id="hero" style="width:100%;display:flex;justify-content:center">${heroHTML(st)}</div>
-      <button class="btn soft my-btn" data-act="portal-login">${icon('user')} Mis consultas y pagos</button>
     </main>
     <footer class="kiosk-foot">Tomate un momento para vos</footer>
   </div>`;
@@ -434,7 +467,7 @@ function tickHome() {
   const t = $('#today'); if (t) t.textContent = fmtLong(now);
   const st = homeState(); const k = homeKey(st);
   if (k !== S.homeKey) { S.homeKey = k; const h = $('#hero'); if (h) h.innerHTML = heroHTML(st); }
-  if (S.settings.autoOpen && st.kind === 'due' && !S.dismissed[st.ev.id] && !$('.modal-back')) openSign(st.p.id, st.ev);
+  if (S.settings.autoOpen && st.kind === 'due' && st.p && !S.dismissed[st.ev.id] && !$('.modal-back')) openSign(st.p.id, st.ev);
 }
 
 /* --------- firma --------- */
@@ -553,7 +586,7 @@ function renderPro(app) {
   app.innerHTML = `<div class="pro">
     <nav class="rail">
       <div class="rail-brand">${icon('leaf')}</div>
-      ${nav('today', 'cal', 'Hoy')}${nav('patients', 'users', 'Pacientes')}${nav('settings', 'sliders', 'Ajustes')}
+      ${nav('today', 'cal', 'Agenda')}${nav('patients', 'users', 'Pacientes')}${nav('settings', 'sliders', 'Ajustes')}
       <div class="rail-spacer"></div>
       <div class="sync-dot" id="sync-dot" title="Sincronización"></div>
       <button class="rail-btn exit" data-act="exit-pro">${icon('lock')}<span>Modo paciente</span></button>
@@ -581,42 +614,82 @@ function syncStatusHTML() {
   return n ? `<span class="sync-dot pending"></span> ${n} cambio(s) esperando para subir` : `<span class="sync-dot ok"></span> Todo guardado en Drive`;
 }
 
-/* --------- Hoy --------- */
+/* --------- Agenda (semana) --------- */
+const wdShort = d => cap(new Intl.DateTimeFormat('es-UY', { weekday: 'short' }).format(d).replace('.', ''));
 function viewToday(main) {
   const now = new Date(); const today = isoDate();
-  const evs = [...S.events].sort((a, b) => evStart(a) - evStart(b));
-  const cur = currentEvent(now);
+  const day = S.params.day || today; const dayDate = parseISO(day);
+  const mon = mondayOf(dayDate); const monIso = isoDate(mon);
+  const loaded = S.loadedWeeks.has(monIso);
+  if (!loaded && S.settings.scriptUrl && navigator.onLine && S.loadingWeek !== monIso) {
+    S.loadingWeek = monIso;
+    loadWeek(mon).then(() => { S.loadingWeek = null; if (S.mode === 'pro' && S.view === 'today') render(); });
+  }
+  const evsOf = iso => S.events.filter(e => sameDay(e, iso)).sort((a, b) => evStart(a) - evStart(b));
+  const days = [...Array(7)].map((_, i) => addDays(mon, i));
+  const strip = days.map(dd => {
+    const iso = isoDate(dd); const n = evsOf(iso).length;
+    return `<button class="day ${iso === day ? 'on' : ''} ${iso === today ? 'is-today' : ''}" data-act="agenda-day" data-day="${iso}" aria-pressed="${iso === day}">
+      <span>${wdShort(dd)}</span><strong>${dd.getDate()}</strong><em>${n ? n + (n === 1 ? ' cita' : ' citas') : '—'}</em></button>`;
+  }).join('');
+  const evs = evsOf(day); const cur = day === today ? currentEvent(now) : null;
   const usedIds = new Set();
   const rows = evs.map(ev => {
     const p = matchEvent(ev); const s = signedFor(ev, p); if (s) usedIds.add(s.id);
     const past = evEnd(ev) < now, isNow = cur && cur.id === ev.id;
-    return `<div class="ev-row ${isNow ? 'now' : ''} ${past ? 'past' : ''} ${s ? 'done' : ''}">
+    return `<div class="ev-row ${isNow ? 'now' : ''} ${past && !s ? 'past' : ''} ${s ? 'done' : ''}">
       <div class="ev-time"><strong>${hhmm(evStart(ev))}</strong><span>${hhmm(evEnd(ev))}</span></div>
       <div><div class="ev-title">${esc(ev.title || '(sin título)')}</div>
         ${isNow ? `<span class="chip now">${icon('clock')} Ahora</span> ` : ''}
-        ${cumpleHoy(p) ? `<span class="chip bday">${icon('cake')} Cumple años hoy</span> ` : ''}
-        ${p ? `<span class="chip ok">${icon('user')} ${esc(p.nombre)}</span>` : `<span class="chip warn">${icon('info')} Sin ficha vinculada</span>`}</div>
+        ${p && diasParaCumple(p.fechaNacimiento) === 0 && day === today ? `<span class="chip bday">${icon('cake')} Cumple años hoy</span> ` : ''}
+        ${p ? `<span class="chip ok">${icon('user')} ${esc(p.nombre)}</span>` : `<span class="chip warn">${icon('info')} Sin paciente vinculado</span>`}</div>
       <div class="ev-actions">
-        ${s ? `<span class="badge-ok">${icon('check')} Firmó ${esc(s.hora)}</span>` : ''}
-        ${p && !s ? `<button class="btn primary small" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Pasar a firma</button>` : ''}
+        ${s ? `<span class="badge-ok">${icon('check')} Firmó ${esc(s.hora)}</span>` : past && p ? `<span class="chip miss">No firmó</span>` : ''}
+        ${p && !s && day === today && !past ? `<button class="btn primary small" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Pasar a firma</button>` : ''}
         ${p ? `<button class="btn soft small" data-act="open-patient" data-pid="${p.id}">Ficha</button>` : `
           <button class="btn sage small" data-act="new-from-event" data-eid="${esc(ev.id)}">${icon('plus')} Crear ficha</button>
           <button class="btn soft small" data-act="link-event" data-eid="${esc(ev.id)}">${icon('link')} Vincular</button>`}
       </div></div>`;
   }).join('');
-  const extra = S.sessions.filter(s => !s.deleted && s.fecha === today && !usedIds.has(s.id));
+  const extra = S.sessions.filter(s => !s.deleted && s.fecha === day && !usedIds.has(s.id));
+  const fin = addDays(mon, 6);
   main.innerHTML = `
-    <header class="page-head"><div><p class="eyebrow">Agenda de hoy</p><h1>${fmtLong(now)}</h1></div>
-      <div class="actions"><button class="btn soft" data-act="refresh-events">${icon('refresh')} Actualizar</button></div></header>
-    ${!S.settings.scriptUrl ? `<div class="note lav">${icon('cal')}<div class="grow"><strong>Conectá tu Google Calendar</strong><p>Así la app sabe a quién le toca según la hora y abre su sesión sola.</p></div><button class="btn small" data-nav="settings">Ir a Ajustes</button></div>` : ''}
+    <header class="page-head"><div><p class="eyebrow">Agenda · semana del ${mon.getDate()}/${mon.getMonth() + 1} al ${fin.getDate()}/${fin.getMonth() + 1}</p><h1>${fmtLong(dayDate)}</h1></div>
+      <div class="actions">
+        <button class="icon-btn" data-act="agenda-week" data-shift="-7" aria-label="Semana anterior">${icon('back')}</button>
+        <button class="btn soft" data-act="agenda-today" ${day === today ? 'disabled' : ''}>Hoy</button>
+        <button class="icon-btn" data-act="agenda-week" data-shift="7" aria-label="Semana siguiente"><svg class="ic" aria-hidden="true" style="transform:scaleX(-1)"><use href="#i-back"/></svg></button>
+        <button class="btn soft" data-act="refresh-events">${icon('refresh')} Actualizar</button>
+      </div></header>
+    ${!S.settings.scriptUrl ? `<div class="note lav">${icon('cal')}<div class="grow"><strong>Conectá tu Google Calendar</strong><p>Así la app trae tu agenda y reconoce a cada paciente.</p></div><button class="btn small" data-nav="settings">Ir a Ajustes</button></div>` : ''}
     ${S.eventsError ? `<div class="note rose">${icon('info')}<div class="grow"><strong>No se pudo leer el calendario</strong><p>${esc(S.eventsError)}</p></div></div>` : ''}
-    ${S.settings.scriptUrl ? `<p class="muted small" style="margin:-10px 0 16px">${S.calName ? `Calendario «${esc(S.calName)}» · ` : ''}${S.eventsUpdated ? 'actualizado ' + hhmm(new Date(S.eventsUpdated)) : 'sin actualizar'}</p>` : ''}
-    ${evs.length ? `<div class="ev-list">${rows}</div>` : `<div class="card empty">${icon('leaf')}<p>${S.settings.scriptUrl ? 'No hay sesiones en el calendario para hoy.' : 'Todavía no hay calendario conectado.'}</p></div>`}
-    ${extra.length ? `<div class="section-title" style="margin-top:28px"><h2>Otras firmas de hoy</h2></div><div class="ev-list">${extra.map(s => {
+    <div class="week-strip">${strip}</div>
+    ${S.settings.scriptUrl ? `<p class="muted small" style="margin:0 0 16px">${S.calName ? `Calendario «${esc(S.calName)}» · ` : ''}${S.eventsUpdated ? 'actualizado ' + hhmm(new Date(S.eventsUpdated)) : 'sin actualizar'}${!loaded ? ' · cargando esta semana…' : ''}</p>` : ''}
+    ${evs.length ? `<div class="ev-list">${rows}</div>` : `<div class="card empty">${icon('leaf')}<p>${!S.settings.scriptUrl ? 'Todavía no hay calendario conectado.' : !loaded ? 'Cargando…' : 'No hay citas en el calendario para este día.'}</p></div>`}
+    ${extra.length ? `<div class="section-title" style="margin-top:28px"><h2>Otras firmas del día</h2></div><div class="ev-list">${extra.map(s => {
     const p = S.patients.find(x => x.id === s.patientId);
     return `<div class="ev-row done"><div class="ev-time"><strong>${esc(s.hora)}</strong></div><div class="ev-title">${esc(p?.nombre || 'Paciente eliminado')}</div>
       <div class="ev-actions"><span class="badge-ok">${icon('check')} Firmó</span>${p && !p.deleted ? `<button class="btn soft small" data-act="open-patient" data-pid="${p.id}">Ficha</button>` : ''}</div></div>`;
   }).join('')}</div>` : ''}`;
+}
+
+/* --------- Próximas citas (ficha y portal) --------- */
+function citasHTML(p, { portal = false } = {}) {
+  if (!S.settings.scriptUrl) return '';
+  const now = new Date(); const citas = citasDe(p.id, now);
+  const rows = citas.map(ev => {
+    const s = signedFor(ev, p); const hoy = sameDay(ev, isoDate()); const ahora = canSignNow(ev, now);
+    const estado = s ? `<span class="pay ok">${icon('check')} Firmada a las ${esc(s.hora)}</span>`
+      : ahora ? `<span class="chip now">${icon('clock')} Ahora</span>`
+      : hoy ? `<span class="pay due">${icon('clock')} Se habilita a las ${hhmm(new Date(evStart(ev) - preMs()))}</span>`
+      : `<span class="muted small">${portal ? 'Vas a poder firmar ese día' : 'Agendada'}</span>`;
+    const btn = !s && ahora && !portal ? `<button class="btn primary" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Pasar a firma</button>` : '';
+    return `<div class="pay-row cita ${s ? 'paid' : ahora ? 'now' : ''}">
+      <div class="pay-date"><strong>${hoy ? 'Hoy' : fmtCita(evStart(ev))}</strong><span>${hhmm(evStart(ev))} a ${hhmm(evEnd(ev))}</span></div>
+      <div class="pay-state">${estado}</div>${btn}</div>`;
+  }).join('');
+  return `<div class="section-title"><h2>${portal ? 'Tus próximas citas' : 'Próximas citas'}</h2></div>
+    ${citas.length ? `<div class="pay-list">${rows}</div>` : `<div class="card empty slim"><p>${portal ? 'No tenés citas agendadas para los próximos días.' : 'No hay citas en el calendario para los próximos días.'}</p></div>`}`;
 }
 
 /* --------- Pacientes --------- */
@@ -776,6 +849,7 @@ function viewPatient(main) {
       </div></header>
     ${infoCards(p, { pro: true })}
     ${hist.length > 1 ? `<details class="card" style="margin-bottom:24px"><summary>Historial de valores</summary><table class="fee-hist">${hist.map(h => `<tr><td>${fmtDMY(h.fecha)}</td><td style="text-align:right"><strong>${money(h.valor)}</strong></td></tr>`).join('')}</table></details>` : ''}
+    ${citasHTML(p)}
     <div class="section-title"><h2>Sesiones y pagos</h2></div>
     ${unpaidSummary(p.id)}
     ${ss.length ? `<div class="s-grid">${ss.map(s => `<div class="s-card ${isPaid(s) ? 'paid' : ''}">
@@ -841,7 +915,7 @@ function findPatientLogin(q) {
   return { err: 'No encontramos ese nombre. Probá con tu cédula.' };
 }
 function portalLogin() {
-  openModal(`<div style="text-align:center"><h2>Mis consultas</h2><p class="muted">${S.settings.allowNameLogin ? 'Escribí tu cédula o tu nombre y apellido.' : 'Escribí tu cédula, sin puntos ni guion.'}</p></div>
+  openModal(`<div style="text-align:center"><h2>Ingresar</h2><p class="muted">${S.settings.allowNameLogin ? 'Escribí tu cédula o tu nombre y apellido para ver tus citas y firmar.' : 'Escribí tu cédula para ver tus citas y firmar.'}</p></div>
     <form id="plf" autocomplete="off">
       <div class="field"><label for="pl-q">${S.settings.allowNameLogin ? 'Cédula o nombre y apellido' : 'Cédula'}</label><input id="pl-q" name="q" required ${S.settings.allowNameLogin ? '' : 'inputmode="numeric"'} autocomplete="off"></div>
       <p class="pin-msg" id="pl-err" style="margin-top:10px"></p>
@@ -859,9 +933,20 @@ function portalLogin() {
     },
   });
 }
+function ahoraHTML(p) {
+  const now = new Date();
+  const ev = citasDe(p.id, now).find(e => canSignNow(e, now));
+  if (!ev) return '';
+  if (signedFor(ev, p)) return `<section class="hero portal-now"><div class="check-bubble">${icon('check')}</div><h2>Ya firmaste tu asistencia de hoy</h2><p>Que tengas una linda sesión.</p></section>`;
+  return `<section class="hero due portal-now"><p class="eyebrow">Tu consulta de hoy · ${hhmm(evStart(ev))} a ${hhmm(evEnd(ev))}</p>
+    <h2>Ya podés firmar tu asistencia</h2>
+    <button class="btn primary big" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Firmar asistencia</button></section>`;
+}
+function portalKey(pid) { const e = citasDe(pid).find(x => canSignNow(x)); return e ? e.id : ''; }
 function renderPortal(app) {
   const p = patientById(S.params.pid); if (!p) { go('home'); return; }
   const ss = sessionsOf(p.id); const first = esc(p.nombre.split(/\s+/)[0]);
+  S.portalKey = portalKey(p.id);
   app.innerHTML = `<div class="portal">
     <header class="sign-top">
       <button class="btn soft" data-act="portal-exit">${icon('back')} Salir</button>
@@ -869,13 +954,15 @@ function renderPortal(app) {
       <span class="portal-spacer"></span>
     </header>
     <section class="portal-hello">${avatar(p.nombre, 'lg')}<div><p class="eyebrow">Tu ficha</p><h1>${cumpleHoy(p) ? '¡Feliz cumpleaños, ' + first + '!' : 'Hola, ' + first}</h1></div></section>
+    ${ahoraHTML(p)}
+    ${citasHTML(p, { portal: true })}
+    <div class="section-title"><h2>Tus consultas y pagos</h2></div>
     ${unpaidSummary(p.id)}
-    <div class="section-title"><h2>Tus consultas</h2></div>
     ${ss.length ? `<div class="pay-list">${ss.map(s => `<div class="pay-row ${isPaid(s) ? 'paid' : ''}">
         <div class="pay-date"><strong>${fmtDMY(s.fecha)}</strong><span>${esc(s.hora)} hs${s.valor != null ? ' · ' + money(s.valor) : ''}</span></div>
         <div class="pay-state">${payBadge(s)}</div>
         ${isPaid(s) ? '' : `<button class="btn primary" data-act="pay" data-sid="${s.id}" data-by="paciente">Registrar pago</button>`}
-      </div>`).join('')}</div>` : `<div class="card empty">${icon('cal')}<p>Todavía no tenés consultas registradas.</p></div>`}
+      </div>`).join('')}</div>` : `<div class="card empty slim"><p>Todavía no tenés consultas firmadas.</p></div>`}
     <details class="card portal-data"><summary>Ver mis datos</summary>${infoCards(p)}
       <p class="muted small">Si algún dato no está bien, avisale a tu terapeuta para corregirlo.</p></details>
     <p class="muted small" style="text-align:center">Por privacidad, esta pantalla se cierra sola a los ${S.settings.portalMin || 2} minutos sin uso.</p>
@@ -921,8 +1008,8 @@ function viewSettings(main) {
 
       <div class="card">
         <h2>${icon('clock')} Modo paciente</h2>
-        <label class="switch"><span>Abrir la firma sola según el calendario<small>Cuando empieza la sesión, se abre la pantalla de firma del paciente.</small></span><input type="checkbox" id="s-auto" ${st.autoOpen ? 'checked' : ''}></label>
-        <div class="field"><label>Abrir cuántos minutos antes de la sesión</label>
+        <label class="switch"><span>Abrir la firma sola, sin pedir cédula<small>Si está prendido, al empezar la sesión se abre directo la firma del paciente que figura en el calendario. Apagado, el paciente ingresa con su cédula y firma desde sus citas.</small></span><input type="checkbox" id="s-auto" ${st.autoOpen ? 'checked' : ''}></label>
+        <div class="field"><label>Habilitar la firma cuántos minutos antes de la sesión</label>
           <select id="s-pre">${[0, 5, 10, 15, 20, 30].map(n => `<option value="${n}" ${+st.preMin === n ? 'selected' : ''}>${n ? n + ' minutos antes' : 'A la hora exacta'}</option>`).join('')}</select></div>
         <label class="switch"><span>Entrar a «Mis consultas» con el nombre<small>Si lo apagás, el paciente tiene que poner su cédula. Es más seguro: con el nombre, cualquiera que lo sepa puede ver los datos de otro paciente.</small></span><input type="checkbox" id="s-namelogin" ${st.allowNameLogin ? 'checked' : ''}></label>
         <label class="switch"><span>Mantener la pantalla encendida<small>En modo paciente la tablet no se apaga sola.</small></span><input type="checkbox" id="s-wake" ${st.wakeLock ? 'checked' : ''}></label>
@@ -964,15 +1051,22 @@ const ACTIONS = {
   'pro': () => enterPro(),
   'portal-login': () => portalLogin(),
   'portal-exit': () => go('home'),
+  'agenda-day': el => go('today', { day: el.dataset.day }),
+  'agenda-today': () => go('today', {}),
+  'agenda-week': el => go('today', { day: isoDate(addDays(parseISO(S.params.day || isoDate()), Number(el.dataset.shift))) }),
   'pay': el => openPayment(el.dataset.sid, el.dataset.by),
   'exit-pro': () => exitPro(),
   'sign-now': () => { const st = homeState(); if (st.p) openSign(st.p.id, st.ev); },
   'cancel-sign': () => { if (S.params.ev) S.dismissed[S.params.ev.id] = true; S.pad?.destroy(); S.pad = null; go('home'); },
   'clear-sign': () => S.pad?.clear(),
   'confirm-sign': el => { el.disabled = true; confirmSign(); },
-  'sign-for': el => openSign(el.dataset.pid, el.dataset.eid ? findEvent(el.dataset.eid) : null),
+  'sign-for': el => {
+    const pid = el.dataset.pid;
+    const ev = el.dataset.eid ? findEvent(el.dataset.eid) : todayEvents().find(e => canSignNow(e) && matchEvent(e)?.id === pid) || null;
+    openSign(pid, ev);
+  },
   'open-patient': el => go('patient', { pid: el.dataset.pid }),
-  'refresh-events': async el => { el.disabled = true; await loadEvents(true); render(); if (!S.eventsError && S.settings.scriptUrl) toast('Calendario actualizado', 'ok'); },
+  'refresh-events': async el => { el.disabled = true; await loadEvents(true); const m = isoDate(mondayOf(parseISO(S.params.day || isoDate()))); if (S.view === 'today' && !S.loadedWeeks.has(m)) await loadWeek(parseISO(m)); else if (S.view === 'today') { S.loadedWeeks.delete(m); await loadWeek(parseISO(m)); } render(); if (!S.eventsError && S.settings.scriptUrl) toast('Calendario actualizado', 'ok'); },
   'new-patient': async () => { const p = await newPatient(); if (p) go('patient', { pid: p.id }); },
   'new-from-event': async el => { const ev = findEvent(el.dataset.eid); const p = await newPatient({ nombre: ev?.title.replace(/^(sesi[oó]n|consulta|terapia)\s*[-:–]?\s*/i, '') }, ev); if (p) render(); },
   'link-event': el => {
@@ -1040,7 +1134,7 @@ const ACTIONS = {
   },
   'disconnect-google': async () => {
     if (!(await confirmBox('Desconectar Google', 'La app deja de leer el calendario y de subir a Drive. Tus datos en la tablet y en Drive no se borran.', 'Desconectar'))) return;
-    S.settings.scriptUrl = ''; S.settings.token = ''; S.events = []; await saveSettings(); render();
+    S.settings.scriptUrl = ''; S.settings.token = ''; S.events = []; S.loadedWeeks.clear(); await saveSettings(); render();
   },
   'sync-now': () => syncAll({ manual: true }),
   'backup-drive': async el => { el.disabled = true; try { await backupToDrive(); render(); } catch (e) { toast(e.message, 'err'); el.disabled = false; } },
@@ -1104,10 +1198,13 @@ window.addEventListener('online', () => { syncAll(); loadEvents(true); });
 let lastDay = isoDate();
 function tick() {
   const today = isoDate();
-  if (today !== lastDay) { lastDay = today; S.dismissed = {}; S.events = []; loadEvents(true); }
+  if (today !== lastDay) { lastDay = today; S.dismissed = {}; S.loadedWeeks.clear(); loadEvents(true); }
   if (S.mode === 'patient' && S.view === 'home') tickHome();
   if (S.mode === 'pro' && Date.now() - S.lastActivity > (S.settings.lockMin || 3) * 60e3) exitPro();
-  if (S.mode === 'patient' && S.view === 'portal' && Date.now() - S.lastActivity > (S.settings.portalMin || 2) * 60e3) go('home');
+  if (S.mode === 'patient' && S.view === 'portal') {
+    if (Date.now() - S.lastActivity > (S.settings.portalMin || 2) * 60e3) go('home');
+    else { const k = portalKey(S.params.pid); if (k !== S.portalKey) render(); }   // habilita "Firmar" cuando llega la hora
+  }
 }
 
 /* ---------------- arranque ---------------- */
@@ -1118,7 +1215,11 @@ async function boot() {
   S.sessions = await DB.all('sessions');
   S.aliases = await DB.getKV('aliases', {});
   const cached = await DB.getKV('events', null);
-  if (cached && cached.date === isoDate()) { S.events = cached.list; S.eventsDate = cached.date; S.eventsUpdated = cached.updated; S.calName = cached.cal || ''; }
+  if (cached) {
+    S.events = cached.list || []; S.calName = cached.cal || '';
+    if (cached.date === isoDate()) { S.eventsDate = cached.date; S.eventsUpdated = cached.updated; (cached.weeks || []).forEach(w => S.loadedWeeks.add(w)); }
+  }
+  if (!S.settings.v13) { S.settings.autoOpen = false; S.settings.v13 = true; await saveSettings(); }  // desde 1.3 el paciente entra con su cédula
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => { });
   history.replaceState({ app: 0 }, ''); history.pushState({ app: 1 }, '');
   render(); requestWake();
