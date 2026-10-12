@@ -387,6 +387,17 @@ details summary{cursor:pointer;font-weight:700;color:var(--ink-soft);padding:6px
   .day.is-today span::after{content:""}
 }
 
+/* ---- v1.4: tocar la cita para firmar ---- */
+button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;border-top:0;border-right:0;border-bottom:0;transition:transform .15s ease, box-shadow .2s}
+.pay-row.cita.tap{border-left-color:var(--primary-d);background:#fff;box-shadow:var(--shadow);animation:invite 2.6s ease-in-out infinite}
+.pay-row.cita.tap:active{transform:scale(.98)}
+.pay-row.cita.tap:focus-visible{outline:3px solid var(--lav-d);outline-offset:3px}
+.pay-row.cita.locked{opacity:.75}
+.pay-row.cita.locked .ic{width:1em;height:1em}
+.tap-cta{display:inline-flex;align-items:center;gap:8px;background:var(--primary-d);color:#fff;font-weight:800;border-radius:999px;padding:12px 22px;white-space:nowrap}
+@keyframes invite{0%,100%{box-shadow:var(--shadow),0 0 0 0 rgba(94,143,114,.0)}50%{box-shadow:var(--shadow),0 0 0 8px rgba(94,143,114,.18)}}
+@media (prefers-reduced-motion:reduce){.pay-row.cita.tap{animation:none}}
+
 /* ============ IMPRESIÓN ============ */
 @media print{
   body{background:#fff;font-size:12pt}
