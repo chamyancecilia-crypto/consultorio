@@ -362,6 +362,31 @@ details summary{cursor:pointer;font-weight:700;color:var(--ink-soft);padding:6px
 .note.peach{background:var(--peach);color:#7E4A33}
 .linkish{border:0;background:none;padding:0;font:inherit;font-weight:800;color:inherit;text-decoration:underline;cursor:pointer}
 
+/* ---- v1.3: agenda semanal y citas ---- */
+.week-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.day{border:0;border-radius:var(--r);background:rgba(255,255,255,.85);box-shadow:var(--shadow-sm);padding:10px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;color:var(--ink)}
+.day span{font-size:.78rem;font-weight:800;letter-spacing:.04em;color:var(--ink-soft)}
+.day strong{font-size:1.45rem;line-height:1.1}
+.day em{font-style:normal;font-size:.74rem;color:var(--ink-soft);white-space:nowrap}
+.day.is-today strong{color:var(--primary-d)}
+.day.is-today span::after{content:" · hoy"}
+.day.on{background:var(--lav);box-shadow:inset 0 0 0 2px var(--lav-d)}
+.day.on em,.day.on span{color:#4E4380}
+.chip.miss{background:var(--rose);color:#7E3A4C}
+.pay-row.cita{border-left-color:var(--sky)}
+.pay-row.cita.now{border-left-color:var(--primary-d);background:#fff}
+.pay-row.cita.paid{border-left-color:var(--sage)}
+.card.empty.slim{padding:22px}
+.portal-now{width:100%;padding:28px}
+.portal-now h2{font-size:clamp(1.5rem,3.4vw,2rem)}
+.hero .muted.small{margin-top:4px}
+@media (max-width:700px){
+  .week-strip{gap:4px}
+  .day{padding:8px 2px}
+  .day em{display:none}
+  .day.is-today span::after{content:""}
+}
+
 /* ============ IMPRESIÓN ============ */
 @media print{
   body{background:#fff;font-size:12pt}
