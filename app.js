@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -185,7 +185,8 @@ function signedFor(ev, p) {
   return S.sessions.find(s => !s.deleted && s.fecha === day && (s.eventId === ev.id || (p && s.patientId === p.id && !s.eventId)));
 }
 function citasDe(pid, now = new Date()) {
-  return S.events.filter(e => evEnd(e) >= now && matchEvent(e)?.id === pid).sort((a, b) => evStart(a) - evStart(b)).slice(0, 12);
+  const hoy = isoDate(now);
+  return S.events.filter(e => (evEnd(e) >= now || sameDay(e, hoy)) && matchEvent(e)?.id === pid).sort((a, b) => evStart(a) - evStart(b)).slice(0, 12);
 }
 const fmtCita = d => cap(new Intl.DateTimeFormat('es-UY', { weekday: 'long', day: 'numeric', month: 'long' }).format(d));
 
@@ -683,7 +684,14 @@ function citasHTML(p, { portal = false } = {}) {
       : ahora ? `<span class="chip now">${icon('clock')} Ahora</span>`
       : hoy ? `<span class="pay due">${icon('clock')} Se habilita a las ${hhmm(new Date(evStart(ev) - preMs()))}</span>`
       : `<span class="muted small">${portal ? 'Vas a poder firmar ese día' : 'Agendada'}</span>`;
-    const btn = !s && ahora && !portal ? `<button class="btn primary" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Pasar a firma</button>` : '';
+    if (portal) {   // el paciente toca su cita de hoy para firmar
+      const fecha = `<div class="pay-date"><strong>${hoy ? 'Hoy' : fmtCita(evStart(ev))}</strong><span>${hhmm(evStart(ev))} a ${hhmm(evEnd(ev))}</span></div>`;
+      if (hoy && !s) return `<button type="button" class="pay-row cita tap" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">
+        ${fecha}<div class="pay-state"><span class="chip now">${icon('clock')} Tu cita de hoy</span></div>
+        <span class="tap-cta">${icon('pen')} Tocá para firmar</span></button>`;
+      return `<div class="pay-row cita ${s ? 'paid' : 'locked'}">${fecha}<div class="pay-state">${s ? `<span class="pay ok">${icon('check')} Firmada a las ${esc(s.hora)}</span>` : `<span class="muted small">${icon('lock')} Se habilita el día de la cita</span>`}</div></div>`;
+    }
+    const btn = !s && ahora ? `<button class="btn primary" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Pasar a firma</button>` : '';
     return `<div class="pay-row cita ${s ? 'paid' : ahora ? 'now' : ''}">
       <div class="pay-date"><strong>${hoy ? 'Hoy' : fmtCita(evStart(ev))}</strong><span>${hhmm(evStart(ev))} a ${hhmm(evEnd(ev))}</span></div>
       <div class="pay-state">${estado}</div>${btn}</div>`;
@@ -934,15 +942,12 @@ function portalLogin() {
   });
 }
 function ahoraHTML(p) {
-  const now = new Date();
-  const ev = citasDe(p.id, now).find(e => canSignNow(e, now));
-  if (!ev) return '';
-  if (signedFor(ev, p)) return `<section class="hero portal-now"><div class="check-bubble">${icon('check')}</div><h2>Ya firmaste tu asistencia de hoy</h2><p>Que tengas una linda sesión.</p></section>`;
-  return `<section class="hero due portal-now"><p class="eyebrow">Tu consulta de hoy · ${hhmm(evStart(ev))} a ${hhmm(evEnd(ev))}</p>
-    <h2>Ya podés firmar tu asistencia</h2>
-    <button class="btn primary big" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Firmar asistencia</button></section>`;
+  const deHoy = citasDe(p.id).filter(e => sameDay(e, isoDate()));
+  if (!deHoy.length) return '';
+  if (deHoy.every(e => signedFor(e, p))) return `<section class="hero portal-now"><div class="check-bubble">${icon('check')}</div><h2>Ya firmaste tu asistencia de hoy</h2><p>Que tengas una linda sesión.</p></section>`;
+  return `<div class="note sage">${icon('pen')}<div class="grow"><strong>Tenés una cita hoy</strong><p>Tocá tu cita en la lista de abajo para firmar tu asistencia.</p></div></div>`;
 }
-function portalKey(pid) { const e = citasDe(pid).find(x => canSignNow(x)); return e ? e.id : ''; }
+function portalKey(pid) { return isoDate() + citasDe(pid).filter(x => sameDay(x, isoDate())).length; }
 function renderPortal(app) {
   const p = patientById(S.params.pid); if (!p) { go('home'); return; }
   const ss = sessionsOf(p.id); const first = esc(p.nombre.split(/\s+/)[0]);
