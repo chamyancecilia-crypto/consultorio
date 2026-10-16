@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -105,6 +105,23 @@ const DEFAULTS = {
 const MEDIOS = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Mercado Pago', 'Otro'];
 const COBERTURAS = ['Particular', 'ASSE', 'CASMU', 'Médica Uruguaya', 'Española', 'SMI', 'Hospital Británico', 'Hospital Evangélico', 'COSEM', 'Círculo Católico', 'CUDAM', 'MP', 'Universal', 'GREMCA', 'Blue Cross', 'Seguro Americano'];
 const isPaid = s => !!(s.pago && s.pago.fecha);
+/* ---- honorarios: historial de cambios ---- */
+const histOrden = p => (p.valorHistorial || []).filter(h => h && h.fecha && h.valor != null)
+  .sort((a, b) => (a.fecha + (a.reg || '')).localeCompare(b.fecha + (b.reg || '')));
+function valorVigente(p, iso = isoDate()) { const h = histOrden(p).filter(x => x.fecha <= iso); return h.length ? h[h.length - 1] : null; }
+function proximoValor(p, iso = isoDate()) { return histOrden(p).find(x => x.fecha > iso) || null; }
+function aplicarHonorarios(p) {   // el valor de la ficha es siempre el vigente hoy
+  if (!(p.valorHistorial || []).length && p.valor != null) p.valorHistorial = [{ id: uid(), valor: p.valor, fecha: p.valorActualizado || (p.creado || '').slice(0, 10) || isoDate(), reg: p.creado || new Date().toISOString() }];
+  (p.valorHistorial || []).forEach(h => { if (!h.id) h.id = uid(); });
+  const v = valorVigente(p);
+  if (v) { p.valor = v.valor; p.valorActualizado = v.fecha; }
+  return p;
+}
+function nuevoHonorario(p, valor, fecha, nota = '') {
+  p.valorHistorial = [...(p.valorHistorial || []), { id: uid(), valor, fecha, nota, reg: new Date().toISOString() }];
+  aplicarHonorarios(p);
+}
+const variacion = (a, b) => (a && b) ? Math.round((b - a) / a * 1000) / 10 : null;
 function edad(iso) {
   if (!iso) return null; const [y, m, d] = iso.split('-').map(Number); const t = new Date();
   let a = t.getFullYear() - y; if (t.getMonth() + 1 < m || (t.getMonth() + 1 === m && t.getDate() < d)) a--; return a;
@@ -242,7 +259,7 @@ async function loadWeek(mon) {
 const patientPayload = p => ({
   id: p.id, nombre: p.nombre, ci: p.ci, telefono: p.telefono,
   emergenciaNombre: p.emergenciaNombre, emergenciaTel: p.emergenciaTel,
-  valor: p.valor, valorActualizado: p.valorActualizado,
+  valor: p.valor, valorActualizado: p.valorActualizado, valorHistorial: histOrden(p),
   email: p.email || '', cobertura: p.cobertura || '', psiquiatra: p.psiquiatra || '', medicacion: p.medicacion || '',
   fechaNacimiento: p.fechaNacimiento || '',
 });
@@ -300,7 +317,7 @@ async function importData(data, { fromDrive = false } = {}) {
   await DB.putMany('sessions', sess);
   S.aliases = { ...(data.aliases || {}), ...S.aliases }; await DB.setKV('aliases', S.aliases);
   if (data.consultorio && !S.settings.consultorio) { S.settings.consultorio = data.consultorio; await saveSettings(); }
-  S.patients = await DB.all('patients'); S.sessions = await DB.all('sessions');
+  S.patients = (await DB.all('patients')).map(aplicarHonorarios); S.sessions = await DB.all('sessions');
   return { p: pats.length, s: sess.length };
 }
 
@@ -567,7 +584,7 @@ async function confirmSign() {
   const ev = S.params.ev; const now = new Date();
   const s = {
     id: uid(), patientId: p.id, fecha: isoDate(now), hora: hhmm(now),
-    firma: S.pad.toPNG(), valor: p.valor ?? null,
+    firma: S.pad.toPNG(), valor: (valorVigente(p) || {}).valor ?? p.valor ?? null,
     eventId: ev?.id || null, eventTitulo: ev?.title || null, eventInicio: ev?.start || null,
     creado: now.toISOString(), sync: 'pending',
   };
@@ -791,11 +808,12 @@ async function savePatientFromForm(p, v) {
   const today = isoDate(); const now = new Date().toISOString();
   if (!p) {
     p = { id: uid(), creado: now, valorHistorial: [], ...v };
-    if (v.valor != null) { p.valorActualizado = today; p.valorHistorial = [{ valor: v.valor, fecha: today }]; }
+    if (v.valor != null) nuevoHonorario(p, v.valor, today, 'Valor inicial');
     S.patients.push(p);
   } else {
-    if (v.valor !== p.valor) { p.valorHistorial = [...(p.valorHistorial || []), { valor: v.valor, fecha: today }]; p.valorActualizado = today; }
+    const nuevo = v.valor; delete v.valor;
     Object.assign(p, v);
+    if (nuevo != null && nuevo !== p.valor) nuevoHonorario(p, nuevo, today);
   }
   p.actualizado = now; p.sync = 'pending';
   await DB.put('patients', p); syncAll();
@@ -824,7 +842,8 @@ function infoCards(p, { pro = false } = {}) {
       <div class="info peach">${icon('hospital')}<span class="label">Institución médica</span><strong>${esc(p.cobertura || '—')}</strong></div>
       <div class="info sky">${icon('stetho')}<span class="label">Psiquiatra tratante</span><strong>${esc(p.psiquiatra || '—')}</strong></div>
       <div class="info butter">${icon('coin')}<span class="label">Valor de la consulta</span><strong>${money(p.valor)}</strong>
-        <small>${p.valorActualizado ? 'Actualizado el ' + fmtDMY(p.valorActualizado) : 'Sin valor cargado'}</small>
+        <small>${p.valorActualizado ? 'Vigente desde el ' + fmtDMY(p.valorActualizado) : 'Sin valor cargado'}</small>
+        ${pro && proximoValor(p) ? `<small><b>Desde el ${fmtDMY(proximoValor(p).fecha)}: ${money(proximoValor(p).valor)}</b></small>` : ''}
         ${pro ? `<button class="btn small" data-act="update-fee" data-pid="${p.id}">Actualizar valor</button>` : ''}</div>
       <div class="info sage full">${icon('pill')}<span class="label">Medicación actual</span><p class="med">${p.medicacion ? esc(p.medicacion) : '—'}</p></div>
     </div>`;
@@ -841,10 +860,31 @@ function unpaidSummary(pid) {
     ? `<div class="note butter">${icon('coin')}<div class="grow"><strong>${u.length} consulta${u.length === 1 ? '' : 's'} sin pagar${tot ? ' · ' + money(tot) : ''}</strong><p>${u.map(s => fmtDMY(s.fecha)).slice(0, 6).join(', ')}${u.length > 6 ? '…' : ''}</p></div></div>`
     : `<div class="note sage">${icon('check')}<div class="grow"><strong>Todas las consultas están pagas</strong></div></div>`;
 }
+function honorariosHTML(p) {
+  const h = histOrden(p); if (!h.length) return '';
+  const vig = valorVigente(p); const hoy = isoDate();
+  const filas = h.map((x, i) => {
+    const v = variacion(h[i - 1]?.valor, x.valor);
+    const estado = x.fecha > hoy ? '<span class="chip warn">Programado</span>' : vig && vig.id === x.id ? '<span class="chip ok">Vigente</span>' : '';
+    return `<tr class="${vig && vig.id === x.id ? 'vig' : ''}">
+      <td><strong>${fmtDMY(x.fecha)}</strong></td>
+      <td class="num"><strong>${money(x.valor)}</strong></td>
+      <td class="num">${v == null ? '—' : `<span class="${v >= 0 ? 'up' : 'down'}">${v > 0 ? '+' : ''}${String(v).replace('.', ',')} %</span>`}</td>
+      <td>${esc(x.nota || '')} ${estado}</td>
+      <td class="muted small">${x.reg ? fmtDMY(x.reg.slice(0, 10)) : '—'}</td>
+      <td class="num"><button class="icon-btn sm soft" data-act="del-fee" data-pid="${p.id}" data-hid="${esc(x.id)}" aria-label="Borrar este cambio">${icon('trash')}</button></td></tr>`;
+  }).reverse().join('');
+  return `<section class="card fee-card">
+    <div class="section-title" style="margin-top:0"><h2>${icon('coin')} Historial de honorarios</h2>
+      <button class="btn small peach" data-act="update-fee" data-pid="${p.id}">${icon('plus')} Registrar cambio</button></div>
+    <div class="table-wrap"><table class="fee-hist">
+      <thead><tr><th>Vigente desde</th><th class="num">Monto</th><th class="num">Variación</th><th>Nota</th><th>Registrado</th><th></th></tr></thead>
+      <tbody>${filas}</tbody></table></div>
+  </section>`;
+}
 function viewPatient(main) {
   const p = patientById(S.params.pid); if (!p) { go('patients'); return; }
   const ss = sessionsOf(p.id);
-  const hist = [...(p.valorHistorial || [])].reverse();
   main.innerHTML = `
     <button class="back" data-nav="patients">${icon('back')} Pacientes</button>
     <header class="ficha-head">${avatar(p.nombre, 'xl')}
@@ -856,7 +896,7 @@ function viewPatient(main) {
         <button class="btn soft" data-act="print-patient" data-pid="${p.id}">${icon('print')} PDF</button>
       </div></header>
     ${infoCards(p, { pro: true })}
-    ${hist.length > 1 ? `<details class="card" style="margin-bottom:24px"><summary>Historial de valores</summary><table class="fee-hist">${hist.map(h => `<tr><td>${fmtDMY(h.fecha)}</td><td style="text-align:right"><strong>${money(h.valor)}</strong></td></tr>`).join('')}</table></details>` : ''}
+    ${honorariosHTML(p)}
     ${citasHTML(p)}
     <div class="section-title"><h2>Sesiones y pagos</h2></div>
     ${unpaidSummary(p.id)}
@@ -988,6 +1028,9 @@ function printPatient(p) {
       <div style="grid-column:1/-1"><b>Medicación actual:</b> ${esc(p.medicacion || '—')}</div>
       <div><b>Valor de la consulta:</b> ${money(p.valor)}${p.valorActualizado ? ' (desde ' + fmtDMY(p.valorActualizado) + ')' : ''}</div>
     </div>
+    ${histOrden(p).length ? `<h3 style="margin:0 0 6pt">Historial de honorarios</h3><table style="margin-bottom:16pt"><thead><tr><th>Vigente desde</th><th>Monto</th><th>Variación</th><th>Nota</th></tr></thead>
+      <tbody>${histOrden(p).map((x, i, a) => { const v = variacion(a[i - 1]?.valor, x.valor); return `<tr><td>${fmtDMY(x.fecha)}</td><td>${money(x.valor)}</td><td>${v == null ? '—' : (v > 0 ? '+' : '') + String(v).replace('.', ',') + ' %'}</td><td>${esc(x.nota || '')}</td></tr>`; }).join('')}</tbody></table>` : ''}
+    <h3 style="margin:0 0 6pt">Sesiones</h3>
     <table><thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Valor</th><th>Pago</th><th>Firma</th></tr></thead>
     <tbody>${ss.map((s, i) => `<tr><td>${i + 1}</td><td>${fmtDMY(s.fecha)}</td><td>${esc(s.hora)}</td><td>${s.valor != null ? money(s.valor) : '—'}</td><td>${isPaid(s) ? fmtDMY(s.pago.fecha) + (s.pago.medio ? '<br><small>' + esc(s.pago.medio) + '</small>' : '') : 'Pendiente'}</td><td><img src="${s.firma}"></td></tr>`).join('')}</tbody></table>
     <p style="color:#888;margin-top:14pt;font-size:9pt">Generado el ${fmtDMY(isoDate())} ${hhmm(new Date())}</p>`;
@@ -1103,21 +1146,31 @@ const ACTIONS = {
   },
   'update-fee': el => {
     const p = patientById(el.dataset.pid);
-    openModal(`<h2>Actualizar valor</h2><p class="muted">Valor actual: <strong>${money(p.valor)}</strong></p>
-      <form id="ff"><div class="field"><label>Nuevo valor de la consulta</label><div class="prefix"><span>$</span><input name="v" inputmode="numeric" required></div></div>
-      <div class="field"><label>Vigente desde</label><input name="f" type="date" value="${isoDate()}"></div>
+    openModal(`<h2>Registrar cambio de honorarios</h2><p class="muted">Valor vigente: <strong>${money(p.valor)}</strong>${p.valorActualizado ? ' desde el ' + fmtDMY(p.valorActualizado) : ''}</p>
+      <form id="ff"><div class="row2"><div class="field"><label for="ff-v">Nuevo monto</label><div class="prefix"><span>$</span><input id="ff-v" name="v" inputmode="numeric" required></div><span class="hint" id="ff-var"></span></div>
+      <div class="field"><label for="ff-f">Vigente desde</label><input id="ff-f" name="f" type="date" value="${isoDate()}"><span class="hint">Puede ser una fecha futura: se aplica sola ese día.</span></div></div>
+      <div class="field"><label for="ff-n">Nota (opcional)</label><input id="ff-n" name="n" placeholder="Ej: aumento anual, ajuste por IPC"></div>
       <div class="modal-actions"><button type="button" class="btn ghost" id="fc">Cancelar</button><button class="btn primary">${icon('check')} Guardar</button></div></form>`, {
       onMount: m => {
         $('#fc', m).onclick = closeModal; setTimeout(() => $('[name=v]', m).focus(), 50);
+        $('[name=v]', m).addEventListener('input', e => { const n = Number(String(e.target.value).replace(/[^\d]/g, '')); const v = variacion(p.valor, n); $('#ff-var', m).textContent = n && v != null ? `${v > 0 ? '+' : ''}${String(v).replace('.', ',')} % respecto al actual` : ''; });
         $('#ff', m).onsubmit = async e => {
           e.preventDefault(); const n = Number(String(e.target.v.value).replace(/[^\d]/g, '')); if (!n) return;
           const f = e.target.f.value || isoDate();
-          p.valor = n; p.valorActualizado = f; p.valorHistorial = [...(p.valorHistorial || []), { valor: n, fecha: f }];
+          nuevoHonorario(p, n, f, e.target.n.value.trim());
           p.actualizado = new Date().toISOString(); p.sync = 'pending'; await DB.put('patients', p);
-          closeModal(); render(); toast('Valor actualizado', 'ok'); syncAll();
+          closeModal(); render(); toast(f > isoDate() ? `Cambio programado para el ${fmtDMY(f)}` : 'Honorarios actualizados', 'ok'); syncAll();
         };
       },
     });
+  },
+  'del-fee': async el => {
+    const p = patientById(el.dataset.pid); const h = (p.valorHistorial || []).find(x => x.id === el.dataset.hid); if (!h) return;
+    if (!(await confirmBox('Borrar cambio de honorarios', `¿Borrar el cambio a ${money(h.valor)} del ${fmtDMY(h.fecha)}? Usalo solo si lo cargaste por error.`, 'Borrar', true))) return;
+    p.valorHistorial = p.valorHistorial.filter(x => x.id !== h.id); aplicarHonorarios(p);
+    if (!histOrden(p).length) { p.valor = null; p.valorActualizado = null; }
+    p.actualizado = new Date().toISOString(); p.sync = 'pending'; await DB.put('patients', p);
+    render(); toast('Cambio borrado'); syncAll();
   },
   'del-session': async el => {
     const s = S.sessions.find(x => x.id === el.dataset.sid);
@@ -1203,7 +1256,7 @@ window.addEventListener('online', () => { syncAll(); loadEvents(true); });
 let lastDay = isoDate();
 function tick() {
   const today = isoDate();
-  if (today !== lastDay) { lastDay = today; S.dismissed = {}; S.loadedWeeks.clear(); loadEvents(true); }
+  if (today !== lastDay) { lastDay = today; S.patients.forEach(aplicarHonorarios); S.dismissed = {}; S.loadedWeeks.clear(); loadEvents(true); }
   if (S.mode === 'patient' && S.view === 'home') tickHome();
   if (S.mode === 'pro' && Date.now() - S.lastActivity > (S.settings.lockMin || 3) * 60e3) exitPro();
   if (S.mode === 'patient' && S.view === 'portal') {
@@ -1218,6 +1271,7 @@ async function boot() {
   S.settings = { ...DEFAULTS, ...(await DB.getKV('settings', {})) };
   S.patients = await DB.all('patients');
   S.sessions = await DB.all('sessions');
+  S.patients.forEach(aplicarHonorarios);
   S.aliases = await DB.getKV('aliases', {});
   const cached = await DB.getKV('events', null);
   if (cached) {
