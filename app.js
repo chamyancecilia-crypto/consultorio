@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.9.2';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -481,7 +481,7 @@ async function enterPro(view = 'today') {
   go(view); loadEvents().then(() => { if (S.mode === 'pro' && S.view === 'today') render(); });
 }
 function exitPro() { S.mode = 'patient'; go('home'); requestWake(); }
-function openSign(pid, ev = null) { S.mode = 'patient'; go('sign', { pid, ev }); requestWake(); }
+function openSign(pid, ev = null, sid = null) { S.mode = 'patient'; go('sign', { pid, ev, sid, from: S.view === 'portal' ? 'portal' : 'home' }); requestWake(); }
 
 function render() {
   const app = $('#app');
@@ -582,7 +582,8 @@ function tickHome() {
 function renderSign(app) {
   const p = patientById(S.params.pid);
   if (!p) { go('home'); return; }
-  const today = fmtDMY(isoDate());
+  const prev = S.params.sid ? S.sessions.find(x => x.id === S.params.sid) : null;
+  const today = fmtDMY(prev ? prev.fecha : isoDate());
   const ev = S.params.ev;
   app.innerHTML = `<div class="sign-view">
     <header class="sign-top">
@@ -671,6 +672,17 @@ class SignaturePad {
 
 async function confirmSign() {
   const p = patientById(S.params.pid); if (!p || !S.pad || S.pad.isEmpty()) return;
+  const prev = S.params.sid ? S.sessions.find(x => x.id === S.params.sid) : null;
+  if (prev) {   // firma de una consulta que ya estaba registrada
+    prev.firma = S.pad.toPNG(); prev.modalidad = 'presencial'; prev.firmadoDespues = new Date().toISOString();
+    prev.editadoPor = 'paciente'; prev.sync = 'pending'; await DB.put('sessions', prev);
+    S.pad.destroy(); S.pad = null;
+    const ov = document.createElement('div'); ov.className = 'thanks';
+    ov.innerHTML = `<div class="check-bubble">${icon('check')}</div><h1>¡Listo!</h1><p>Tu firma de la consulta del ${fmtDMY(prev.fecha)} quedó guardada.</p>`;
+    document.body.appendChild(ov); syncAll();
+    setTimeout(() => { ov.remove(); S.lastActivity = Date.now(); go('portal', { pid: p.id }); }, 2500);
+    return;
+  }
   const ev = S.params.ev; const now = new Date();
   const s = {
     id: uid(), patientId: p.id, fecha: isoDate(now), hora: hhmm(now),
@@ -1030,19 +1042,20 @@ function consultasHTML(p, { portal = false } = {}) {
   const fila = s => {
     const pagada = isPaid(s);
     return `<tr class="${pagada ? 'ok' : 'due'}">
-      <td class="c-fecha" data-label="Fecha de consulta">${portal ? `<strong>${fmtDMY(s.fecha)}</strong>` : `<button type="button" class="cell-edit" data-act="edit-session" data-sid="${s.id}" title="Editar consulta"><strong>${fmtDMY(s.fecha)}</strong></button>`}<div class="muted small">${s.hora ? esc(s.hora) + ' hs' : ''}${!portal && s.sync !== 'ok' ? ` <span class="cloud pending" title="Pendiente de subir a Drive">${icon('cloud')}</span>` : ''}</div></td>
+      <td class="c-fecha" data-label="Fecha de consulta"><button type="button" class="cell-edit" data-act="edit-session" data-sid="${s.id}" data-by="${portal ? 'paciente' : 'profesional'}" title="${portal ? 'Corregir consulta' : 'Editar consulta'}"><strong>${fmtDMY(s.fecha)}</strong></button><div class="muted small">${s.hora ? esc(s.hora) + ' hs' : ''}${!portal && s.sync !== 'ok' ? ` <span class="cloud pending" title="Pendiente de subir a Drive">${icon('cloud')}</span>` : ''}</div>${!portal && s.editadoPor === 'paciente' ? '<div class="muted small edit-pac">Corregida por el paciente</div>' : ''}</td>
       <td class="c-modo" data-label="Modalidad / firma">${isOnline(s)
         ? `<span class="modo on">${icon('video')} Online</span><div class="muted small">Sin firma</div>`
-        : `<span class="modo pre">${icon('pen')} Presencial</span>${!portal && s.firma ? `<img class="firma-mini" src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">` : `<div class="muted small">Sin firma</div>`}`}</td>
+        : `<span class="modo pre">${icon('pen')} Presencial</span>${s.firma ? (portal ? '<div class="muted small">Firmada</div>' : `<img class="firma-mini" src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">`) : `<div class="muted small">Sin firma</div>`}`}
+        ${!s.firma ? `<button type="button" class="linkbtn" data-act="sign-session" data-sid="${s.id}">${icon('pen')} Firmar</button>` : ''}</td>
       <td class="c-valor num" data-label="Valor">${s.valor != null ? money(s.valor) : '—'}</td>
       <td class="c-pago" data-label="Pago">${portal
-        ? (pagada ? `<span class="pay ok">${icon('check')} Paga</span>` : `<button type="button" class="pay pay-tap due" data-act="pay" data-sid="${s.id}" data-by="paciente">${icon('clock')} No paga<span class="pay-hint">registrar pago</span></button>`)
+        ? `<button type="button" class="pay pay-tap ${pagada ? 'ok' : 'due'}" data-act="pay" data-sid="${s.id}" data-by="paciente">${pagada ? `${icon('check')} Paga` : `${icon('clock')} No paga`}<span class="pay-hint">${pagada ? 'corregir' : 'registrar pago'}</span></button>`
         : `<button type="button" class="pay pay-tap ${pagada ? 'ok' : 'due'}" data-act="pay" data-sid="${s.id}" data-by="profesional" title="${pagada ? 'Tocá para editar o quitar el pago' : 'Tocá para marcar como paga'}">${pagada ? `${icon('check')} Paga` : `${icon('clock')} No paga`}<span class="pay-hint">${pagada ? 'editar' : 'marcar paga'}</span></button>`}</td>
       <td class="c-medio" data-label="Fecha y medio de pago">${pagada ? `<strong>${fmtDMY(s.pago.fecha)}</strong>${s.pago.medio ? `<div>${esc(s.pago.medio)}</div>` : ''}${!portal && s.pago.por === 'paciente' ? '<div class="muted small">Lo registró el paciente</div>' : ''}` : '<span class="muted">—</span>'}</td>
-      ${portal ? '' : `<td class="c-acc"><div class="acc-in"><button class="icon-btn sm soft" data-act="edit-session" data-sid="${s.id}" aria-label="Editar consulta" title="Editar consulta">${icon('edit')}</button><button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar consulta" title="Eliminar consulta">${icon('trash')}</button></div></td>`}</tr>`;
+      <td class="c-acc"><div class="acc-in"><button class="icon-btn sm soft" data-act="edit-session" data-sid="${s.id}" data-by="${portal ? 'paciente' : 'profesional'}" aria-label="${portal ? 'Corregir consulta' : 'Editar consulta'}" title="${portal ? 'Corregir consulta' : 'Editar consulta'}">${icon('edit')}</button>${portal ? '' : `<button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar consulta" title="Eliminar consulta">${icon('trash')}</button>`}</div></td></tr>`;
   };
-  const head = `<colgroup><col class="w-fecha"><col class="w-modo"><col class="w-valor"><col class="w-pago"><col class="w-medio">${portal ? '' : '<col class="w-acc">'}</colgroup>
-    <thead><tr><th>Fecha</th><th>Modalidad</th><th class="num">Valor</th><th>Pago</th><th>Pagado el / medio</th>${portal ? '' : '<th></th>'}</tr></thead>`;
+  const head = `<colgroup><col class="w-fecha"><col class="w-modo"><col class="w-valor"><col class="w-pago"><col class="w-medio"><col class="${portal ? 'w-acc1' : 'w-acc'}"></colgroup>
+    <thead><tr><th>Fecha</th><th>Modalidad</th><th class="num">Valor</th><th>Pago</th><th>Pagado el / medio</th><th></th></tr></thead>`;
   const tabla = list => `<div class="ses-wrap"><table class="ses-table">${head}<tbody>${list.map(fila).join('')}</tbody></table></div>`;
   const pend = ss.filter(s => !isPaid(s)), pag = ss.filter(isPaid);
   if (portal) return `
@@ -1061,7 +1074,7 @@ function consultasHTML(p, { portal = false } = {}) {
 function openPayment(sid, by) {
   const s = S.sessions.find(x => x.id === sid); if (!s) return;
   const cur = s.pago || {};
-  const canClear = by === 'profesional' && isPaid(s);
+  const canClear = isPaid(s);
   openModal(`<h2>Registrar pago</h2>
     <p class="muted">Consulta del <strong>${fmtDMY(s.fecha)}</strong>${s.valor != null ? ' · ' + money(s.valor) : ''}</p>
     <form id="payf">
@@ -1084,6 +1097,7 @@ function openPayment(sid, by) {
       $('#payf', m).onsubmit = e => {
         e.preventDefault(); const f = e.target;
         if (!f.fecha.value) return;
+        if (by === 'paciente') s.editadoPor = 'paciente';
         save({ fecha: f.fecha.value, medio: (f.querySelector('[name=medio]:checked') || {}).value || '', por: by, registrado: new Date().toISOString() });
       };
     },
@@ -1246,7 +1260,7 @@ const ACTIONS = {
   'pay': el => openPayment(el.dataset.sid, el.dataset.by),
   'exit-pro': () => exitPro(),
   'sign-now': () => { const st = homeState(); if (st.p) openSign(st.p.id, st.ev); },
-  'cancel-sign': () => { if (S.params.ev) S.dismissed[S.params.ev.id] = true; S.pad?.destroy(); S.pad = null; go('home'); },
+  'cancel-sign': () => { if (S.params.ev) S.dismissed[S.params.ev.id] = true; S.pad?.destroy(); S.pad = null; const pid = S.params.pid; if (S.params.from === 'portal' && pid) { S.lastActivity = Date.now(); go('portal', { pid }); } else go('home'); },
   'clear-sign': () => S.pad?.clear(),
   'confirm-sign': el => { el.disabled = true; confirmSign(); },
   'sign-for': el => {
@@ -1306,11 +1320,12 @@ const ACTIONS = {
     });
   },
   'ses-filter': el => { S.params.f = el.dataset.f; render(); },
+  'sign-session': el => { const s = S.sessions.find(x => x.id === el.dataset.sid); if (s) openSign(s.patientId, null, s.id); },
   'edit-session': el => {
     const s = S.sessions.find(x => x.id === el.dataset.sid); if (!s) return;
     const p = S.patients.find(x => x.id === s.patientId);
-    const pago = s.pago || {};
-    openModal(`<h2>Editar consulta</h2><p class="muted">${esc(p?.nombre || '')}${s.firma ? ' · tiene firma registrada' : ''}</p>
+    const pago = s.pago || {}; const pac = el.dataset.by === 'paciente';
+    openModal(`<h2>${pac ? 'Corregir mi consulta' : 'Editar consulta'}</h2><p class="muted">${pac ? 'Si algo no está bien, corregilo acá. Tu terapeuta va a ver que lo corregiste vos.' : esc(p?.nombre || '') + (s.firma ? ' · tiene firma registrada' : '')}</p>
       <form id="ef">
         <p class="form-sec">Consulta</p>
         <div class="row2">
@@ -1321,8 +1336,9 @@ const ACTIONS = {
           <label class="chip-opt"><input type="radio" name="mod" value="presencial" ${isOnline(s) ? '' : 'checked'}><span>${icon('pen')}&nbsp;Presencial</span></label>
           <label class="chip-opt"><input type="radio" name="mod" value="online" ${isOnline(s) ? 'checked' : ''}><span>${icon('video')}&nbsp;Online</span></label></div>
           ${s.firma ? '<span class="hint">Si la pasás a online, la firma se conserva guardada pero la consulta figura como online.</span>' : ''}</div>
-        <div class="field"><label for="ef-v">Valor de la consulta</label><div class="prefix"><span>$</span><input id="ef-v" name="v" inputmode="numeric" value="${s.valor ?? ''}"></div><span class="hint" id="ef-vh"></span></div>
-        <div class="field"><label for="ef-n">Nota (opcional)</label><input id="ef-n" name="n" value="${esc(s.nota || '')}"></div>
+        ${pac ? '' : `<div class="field"><label for="ef-v">Valor de la consulta</label><div class="prefix"><span>$</span><input id="ef-v" name="v" inputmode="numeric" value="${s.valor ?? ''}"></div><span class="hint" id="ef-vh"></span></div>
+        <div class="field"><label for="ef-n">Nota (opcional)</label><input id="ef-n" name="n" value="${esc(s.nota || '')}"></div>`}
+        ${pac && !s.firma ? `<div class="field"><button type="button" class="btn sage small" data-act="sign-session" data-sid="${s.id}">${icon('pen')} Firmar esta consulta</button></div>` : ''}
         <p class="form-sec">Pago</p>
         <div class="field"><div class="chips">
           <label class="chip-opt"><input type="radio" name="est" value="no" ${isPaid(s) ? '' : 'checked'}><span>No paga</span></label>
@@ -1340,15 +1356,15 @@ const ACTIONS = {
         const showPago = () => { $('#ef-pago', m).hidden = f.querySelector('[name=est]:checked').value !== 'si'; };
         f.querySelectorAll('[name=est]').forEach(r => r.addEventListener('change', showPago));
         const hintVal = () => { const v = p ? (valorVigente(p, f.f.value) || {}).valor : null; $('#ef-vh', m).innerHTML = v != null && Number(String(f.v.value).replace(/[^\d]/g, '')) !== v ? `Según tus honorarios, para esa fecha el valor era ${money(v)}. <button type="button" class="linkbtn" id="ef-use">Usar ese valor</button>` : ''; const u = $('#ef-use', m); if (u) u.onclick = () => { f.v.value = v; hintVal(); }; };
-        f.f.addEventListener('change', hintVal); f.v.addEventListener('input', hintVal); hintVal();
+        if (!pac) { f.f.addEventListener('change', hintVal); f.v.addEventListener('input', hintVal); hintVal(); }
         f.onsubmit = async e => {
           e.preventDefault();
           s.fecha = f.f.value || s.fecha; s.hora = f.h.value || '';
           s.modalidad = f.querySelector('[name=mod]:checked').value === 'online' ? 'online' : 'presencial';
-          const num = String(f.v.value).replace(/[^\d]/g, ''); s.valor = num ? Number(num) : null;
-          s.nota = f.n.value.trim();
+          if (!pac) { const num = String(f.v.value).replace(/[^\d]/g, ''); s.valor = num ? Number(num) : null; s.nota = f.n.value.trim(); }
+          else { s.editadoPor = 'paciente'; S.lastActivity = Date.now(); }
           if (f.querySelector('[name=est]:checked').value === 'si') {
-            s.pago = { fecha: f.pf.value || isoDate(), medio: (f.querySelector('[name=medio]:checked') || {}).value || '', por: (s.pago && s.pago.por) || 'profesional', registrado: (s.pago && s.pago.registrado) || new Date().toISOString() };
+            s.pago = { fecha: f.pf.value || isoDate(), medio: (f.querySelector('[name=medio]:checked') || {}).value || '', por: pac ? 'paciente' : ((s.pago && s.pago.por) || 'profesional'), registrado: (s.pago && s.pago.registrado) || new Date().toISOString() };
           } else s.pago = null;
           s.editado = new Date().toISOString(); s.sync = 'pending'; await DB.put('sessions', s);
           closeModal(); render(); toast('Consulta actualizada', 'ok'); syncAll();
