@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.9.5';
+const APP_VERSION = '1.9.6';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -675,12 +675,12 @@ async function confirmSign() {
   const prev = S.params.sid ? S.sessions.find(x => x.id === S.params.sid) : null;
   if (prev) {   // firma de una consulta que ya estaba registrada
     prev.firma = S.pad.toPNG(); prev.modalidad = 'presencial'; prev.firmadoDespues = new Date().toISOString();
-    prev.editadoPor = 'paciente'; prev.sync = 'pending'; await DB.put('sessions', prev);
+    if (S.params.from === 'portal') prev.editadoPor = 'paciente'; prev.sync = 'pending'; await DB.put('sessions', prev);
     S.pad.destroy(); S.pad = null;
     const ov = document.createElement('div'); ov.className = 'thanks';
     ov.innerHTML = `<div class="check-bubble">${icon('check')}</div><h1>¡Listo!</h1><p>Tu firma de la consulta del ${fmtDMY(prev.fecha)} quedó guardada.</p>`;
     document.body.appendChild(ov); syncAll();
-    setTimeout(() => { ov.remove(); S.lastActivity = Date.now(); go('portal', { pid: p.id }); }, 2500);
+    setTimeout(() => { ov.remove(); S.lastActivity = Date.now(); if (S.params.from === 'portal') go('portal', { pid: p.id }); else go('home'); }, 2500);
     return;
   }
   const ev = S.params.ev; const now = new Date();
@@ -1004,6 +1004,7 @@ function viewPatient(main) {
         <p class="muted">${ss.length} ${ss.length === 1 ? 'sesión firmada' : 'sesiones firmadas'}${ss[0] ? ' · última el ' + fmtDMY(ss[0].fecha) : ''}</p></div>
       <div class="actions">
         <button class="btn primary" data-act="sign-for" data-pid="${p.id}">${icon('pen')} Pasar a firma</button>
+        <button class="btn butter" data-act="new-session" data-pid="${p.id}">${icon('plus')} Nueva consulta</button>
         <button class="btn sky" data-act="add-online" data-pid="${p.id}">${icon('video')} Consulta online</button>
         <button class="btn soft" data-act="edit-patient" data-pid="${p.id}">${icon('edit')} Editar</button>
         <button class="btn soft" data-act="print-patient" data-pid="${p.id}">${icon('print')} Imprimir</button>
@@ -1297,6 +1298,72 @@ function viewSettings(main) {
 
 /* ---------------- acciones (delegación de eventos) ---------------- */
 const findEvent = id => S.events.find(e => e.id === id);
+function sessionForm(s, { pac = false, nuevo = false } = {}) {
+  const p = S.patients.find(x => x.id === s.patientId);
+  const pago = s.pago || {};
+  openModal(`<h2>${nuevo ? 'Nueva consulta' : pac ? 'Corregir mi consulta' : 'Editar consulta'}</h2><p class="muted">${nuevo ? 'Registrá una consulta de ' + esc(p?.nombre || '') + ' aunque no esté en el calendario.' : pac ? 'Si algo no está bien, corregilo acá. Tu terapeuta va a ver que lo corregiste vos.' : esc(p?.nombre || '') + (s.firma ? ' · tiene firma registrada' : '')}</p>
+    <form id="ef">
+      <p class="form-sec">Consulta</p>
+      <div class="row2">
+        <div class="field"><label for="ef-f">Fecha de asistencia</label><input id="ef-f" name="f" type="date" required ${nuevo ? '' : `max="${isoDate()}"`} value="${esc(s.fecha)}"></div>
+        <div class="field"><label for="ef-h">Hora</label><input id="ef-h" name="h" type="time" value="${esc(s.hora || '')}"></div>
+      </div>
+      <div class="field"><label>Modalidad</label><div class="chips">
+        <label class="chip-opt"><input type="radio" name="mod" value="presencial" ${isOnline(s) ? '' : 'checked'}><span>${icon('pen')}&nbsp;Presencial</span></label>
+        <label class="chip-opt"><input type="radio" name="mod" value="online" ${isOnline(s) ? 'checked' : ''}><span>${icon('video')}&nbsp;Online</span></label></div>
+        ${nuevo ? '<label class="check-line" id="ef-signwrap"><input type="checkbox" name="firmar"> Pasar a firma al guardar (el paciente firma ahora en la tablet)</label>' : ''}
+        ${s.firma ? '<span class="hint">Si la pasás a online, la firma se conserva guardada pero la consulta figura como online.</span>' : ''}</div>
+      ${pac ? '' : `<div class="field"><label for="ef-v">Valor de la consulta</label><div class="prefix"><span>$</span><input id="ef-v" name="v" inputmode="numeric" value="${s.valor ?? ''}"></div><span class="hint" id="ef-vh"></span></div>
+      <div class="field"><label for="ef-n">Nota (opcional)</label><input id="ef-n" name="n" value="${esc(s.nota || '')}"></div>`}
+      ${pac && !s.firma ? `<div class="field"><button type="button" class="btn sage small" data-act="sign-session" data-sid="${s.id}">${icon('pen')} Firmar esta consulta</button></div>` : ''}
+      <p class="form-sec">Pago</p>
+      <div class="field"><div class="chips">
+        <label class="chip-opt"><input type="radio" name="est" value="no" ${isPaid(s) ? '' : 'checked'}><span>No paga</span></label>
+        <label class="chip-opt"><input type="radio" name="est" value="si" ${isPaid(s) ? 'checked' : ''}><span>Paga</span></label></div></div>
+      <div id="ef-pago" ${isPaid(s) ? '' : 'hidden'}>
+        <div class="field"><label for="ef-pf">Fecha de pago</label><input id="ef-pf" name="pf" type="date" max="${isoDate()}" value="${esc(pago.fecha || isoDate())}"></div>
+        <div class="field"><label>Medio de pago</label><div class="chips">${MEDIOS.map((md, i) => `<label class="chip-opt"><input type="radio" name="medio" value="${esc(md)}" ${(pago.medio ? pago.medio === md : i === 1) ? 'checked' : ''}><span>${esc(md)}</span></label>`).join('')}</div></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn ghost" id="ec">Cancelar</button><button class="btn primary">${icon('check')} ${nuevo ? 'Crear consulta' : 'Guardar cambios'}</button></div>
+    </form>`, {
+    wide: true,
+    onMount: m => {
+      const f = $('#ef', m);
+      $('#ec', m).onclick = closeModal;
+      const showPago = () => { $('#ef-pago', m).hidden = f.querySelector('[name=est]:checked').value !== 'si'; };
+      f.querySelectorAll('[name=est]').forEach(r => r.addEventListener('change', showPago));
+      const hintVal = () => { const v = p ? (valorVigente(p, f.f.value) || {}).valor : null; $('#ef-vh', m).innerHTML = v != null && Number(String(f.v.value).replace(/[^\d]/g, '')) !== v ? `Según tus honorarios, para esa fecha el valor era ${money(v)}. <button type="button" class="linkbtn" id="ef-use">Usar ese valor</button>` : ''; const u = $('#ef-use', m); if (u) u.onclick = () => { f.v.value = v; hintVal(); }; };
+      if (nuevo) {   // en una consulta nueva el valor sigue a la fecha, y la firma solo aplica a presencial
+      let tocado = false; f.v.addEventListener('input', () => { tocado = true; });
+      f.f.addEventListener('change', () => { if (!tocado && p) { const v = (valorVigente(p, f.f.value) || {}).valor ?? p.valor; if (v != null) f.v.value = v; } });
+      const sw = () => { const on = f.querySelector('[name=mod]:checked').value !== 'online'; $('#ef-signwrap', m).hidden = !on; if (!on) f.firmar.checked = false; };
+      f.querySelectorAll('[name=mod]').forEach(r => r.addEventListener('change', sw)); sw();
+    }
+    if (!pac) { f.f.addEventListener('change', hintVal); f.v.addEventListener('input', hintVal); hintVal(); }
+      f.onsubmit = async e => {
+        e.preventDefault();
+        s.fecha = f.f.value || s.fecha; s.hora = f.h.value || '';
+        s.modalidad = f.querySelector('[name=mod]:checked').value === 'online' ? 'online' : 'presencial';
+        if (!pac) { const num = String(f.v.value).replace(/[^\d]/g, ''); s.valor = num ? Number(num) : null; s.nota = f.n.value.trim(); }
+        else { s.editadoPor = 'paciente'; S.lastActivity = Date.now(); }
+        if (f.querySelector('[name=est]:checked').value === 'si') {
+          s.pago = { fecha: f.pf.value || isoDate(), medio: (f.querySelector('[name=medio]:checked') || {}).value || '', por: pac ? 'paciente' : ((s.pago && s.pago.por) || 'profesional'), registrado: (s.pago && s.pago.registrado) || new Date().toISOString() };
+        } else s.pago = null;
+        if (nuevo) {
+          Object.assign(s, { id: uid(), creado: new Date().toISOString(), manual: true, eventId: null, sync: 'pending' });
+          await DB.put('sessions', s); S.sessions.push(s);
+          const firmar = s.modalidad === 'presencial' && f.firmar.checked;
+          closeModal(); syncAll();
+          if (firmar) { openSign(p.id, null, s.id); return; }
+          render(); toast('Consulta creada', 'ok'); return;
+        }
+        s.editado = new Date().toISOString(); s.sync = 'pending'; await DB.put('sessions', s);
+        closeModal(); render(); toast('Consulta actualizada', 'ok'); syncAll();
+      };
+    },
+    });
+}
+
 const ACTIONS = {
   'pro': () => enterPro(),
   'portal-login': () => portalLogin(),
@@ -1370,55 +1437,15 @@ const ACTIONS = {
   'sign-session': el => { const s = S.sessions.find(x => x.id === el.dataset.sid); if (s) openSign(s.patientId, null, s.id); },
   'edit-session': el => {
     const s = S.sessions.find(x => x.id === el.dataset.sid); if (!s) return;
-    const p = S.patients.find(x => x.id === s.patientId);
-    const pago = s.pago || {}; const pac = el.dataset.by === 'paciente';
-    openModal(`<h2>${pac ? 'Corregir mi consulta' : 'Editar consulta'}</h2><p class="muted">${pac ? 'Si algo no está bien, corregilo acá. Tu terapeuta va a ver que lo corregiste vos.' : esc(p?.nombre || '') + (s.firma ? ' · tiene firma registrada' : '')}</p>
-      <form id="ef">
-        <p class="form-sec">Consulta</p>
-        <div class="row2">
-          <div class="field"><label for="ef-f">Fecha de asistencia</label><input id="ef-f" name="f" type="date" required max="${isoDate()}" value="${esc(s.fecha)}"></div>
-          <div class="field"><label for="ef-h">Hora</label><input id="ef-h" name="h" type="time" value="${esc(s.hora || '')}"></div>
-        </div>
-        <div class="field"><label>Modalidad</label><div class="chips">
-          <label class="chip-opt"><input type="radio" name="mod" value="presencial" ${isOnline(s) ? '' : 'checked'}><span>${icon('pen')}&nbsp;Presencial</span></label>
-          <label class="chip-opt"><input type="radio" name="mod" value="online" ${isOnline(s) ? 'checked' : ''}><span>${icon('video')}&nbsp;Online</span></label></div>
-          ${s.firma ? '<span class="hint">Si la pasás a online, la firma se conserva guardada pero la consulta figura como online.</span>' : ''}</div>
-        ${pac ? '' : `<div class="field"><label for="ef-v">Valor de la consulta</label><div class="prefix"><span>$</span><input id="ef-v" name="v" inputmode="numeric" value="${s.valor ?? ''}"></div><span class="hint" id="ef-vh"></span></div>
-        <div class="field"><label for="ef-n">Nota (opcional)</label><input id="ef-n" name="n" value="${esc(s.nota || '')}"></div>`}
-        ${pac && !s.firma ? `<div class="field"><button type="button" class="btn sage small" data-act="sign-session" data-sid="${s.id}">${icon('pen')} Firmar esta consulta</button></div>` : ''}
-        <p class="form-sec">Pago</p>
-        <div class="field"><div class="chips">
-          <label class="chip-opt"><input type="radio" name="est" value="no" ${isPaid(s) ? '' : 'checked'}><span>No paga</span></label>
-          <label class="chip-opt"><input type="radio" name="est" value="si" ${isPaid(s) ? 'checked' : ''}><span>Paga</span></label></div></div>
-        <div id="ef-pago" ${isPaid(s) ? '' : 'hidden'}>
-          <div class="field"><label for="ef-pf">Fecha de pago</label><input id="ef-pf" name="pf" type="date" max="${isoDate()}" value="${esc(pago.fecha || isoDate())}"></div>
-          <div class="field"><label>Medio de pago</label><div class="chips">${MEDIOS.map((md, i) => `<label class="chip-opt"><input type="radio" name="medio" value="${esc(md)}" ${(pago.medio ? pago.medio === md : i === 1) ? 'checked' : ''}><span>${esc(md)}</span></label>`).join('')}</div></div>
-        </div>
-        <div class="modal-actions"><button type="button" class="btn ghost" id="ec">Cancelar</button><button class="btn primary">${icon('check')} Guardar cambios</button></div>
-      </form>`, {
-      wide: true,
-      onMount: m => {
-        const f = $('#ef', m);
-        $('#ec', m).onclick = closeModal;
-        const showPago = () => { $('#ef-pago', m).hidden = f.querySelector('[name=est]:checked').value !== 'si'; };
-        f.querySelectorAll('[name=est]').forEach(r => r.addEventListener('change', showPago));
-        const hintVal = () => { const v = p ? (valorVigente(p, f.f.value) || {}).valor : null; $('#ef-vh', m).innerHTML = v != null && Number(String(f.v.value).replace(/[^\d]/g, '')) !== v ? `Según tus honorarios, para esa fecha el valor era ${money(v)}. <button type="button" class="linkbtn" id="ef-use">Usar ese valor</button>` : ''; const u = $('#ef-use', m); if (u) u.onclick = () => { f.v.value = v; hintVal(); }; };
-        if (!pac) { f.f.addEventListener('change', hintVal); f.v.addEventListener('input', hintVal); hintVal(); }
-        f.onsubmit = async e => {
-          e.preventDefault();
-          s.fecha = f.f.value || s.fecha; s.hora = f.h.value || '';
-          s.modalidad = f.querySelector('[name=mod]:checked').value === 'online' ? 'online' : 'presencial';
-          if (!pac) { const num = String(f.v.value).replace(/[^\d]/g, ''); s.valor = num ? Number(num) : null; s.nota = f.n.value.trim(); }
-          else { s.editadoPor = 'paciente'; S.lastActivity = Date.now(); }
-          if (f.querySelector('[name=est]:checked').value === 'si') {
-            s.pago = { fecha: f.pf.value || isoDate(), medio: (f.querySelector('[name=medio]:checked') || {}).value || '', por: pac ? 'paciente' : ((s.pago && s.pago.por) || 'profesional'), registrado: (s.pago && s.pago.registrado) || new Date().toISOString() };
-          } else s.pago = null;
-          s.editado = new Date().toISOString(); s.sync = 'pending'; await DB.put('sessions', s);
-          closeModal(); render(); toast('Consulta actualizada', 'ok'); syncAll();
-        };
-      },
-    });
+    sessionForm(s, { pac: el.dataset.by === 'paciente' });
   },
+  'new-session': el => {
+    const p = patientById(el.dataset.pid); if (!p) return;
+    const fecha = isoDate();
+    sessionForm({ patientId: p.id, fecha, hora: hhmm(new Date()), modalidad: 'presencial', firma: null, pago: null, nota: '',
+      valor: (valorVigente(p, fecha) || {}).valor ?? p.valor ?? null }, { nuevo: true });
+  },
+
   'online-for': async el => {
     const p = patientById(el.dataset.pid); const ev = findEvent(el.dataset.eid); if (!p || !ev) return;
     if (!(await confirmBox('Consulta online', `¿Registrar la consulta de ${p.nombre} del ${fmtDMY(isoDate(evStart(ev)))} a las ${hhmm(evStart(ev))} como online, sin firma?`, 'Registrar online'))) return;
