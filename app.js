@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.8.2';
+const APP_VERSION = '1.8.3';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -895,24 +895,23 @@ async function newPatient(prefill = {}, linkEvent = null) {
 /* --------- Ficha --------- */
 const telLink = t => t ? `<a href="tel:${esc(t.replace(/\s/g, ''))}">${esc(t)}</a>` : '—';
 function infoCards(p, { pro = false } = {}) {
-  return `<div class="info-grid">
-      <div class="info sky">${icon('id')}<span class="label">Cédula</span><strong>${esc(p.ci || '—')}</strong></div>
-      <div class="info butter">${icon('cake')}<span class="label">Fecha de nacimiento</span><strong>${p.fechaNacimiento ? fmtDMY(p.fechaNacimiento) : '—'}</strong>
-        ${p.fechaNacimiento ? `<small>${edad(p.fechaNacimiento)} años</small>` : ''}${cumpleHoy(p) ? `<span class="pay bday">${icon('cake')} ¡Hoy cumple años!</span>` : ''}</div>
-      <div class="info sage">${icon('phone')}<span class="label">Teléfono</span><strong>${telLink(p.telefono)}</strong></div>
-      <div class="info lav">${icon('mail')}<span class="label">Mail</span><strong class="wrap">${p.email ? (pro ? `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>` : esc(p.email)) : '—'}</strong></div>
-      <div class="info rose">${icon('heart')}<span class="label">Contacto de emergencia</span><strong>${esc(p.emergenciaNombre || '—')}</strong>
-        ${p.emergenciaTel ? `<small>${telLink(p.emergenciaTel)}</small>` : ''}</div>
-      <div class="info peach">${icon('hospital')}<span class="label">Institución médica</span><strong>${esc(p.cobertura || '—')}</strong></div>
-      <div class="info sky">${icon('stetho')}<span class="label">Psiquiatra tratante</span><strong>${esc(p.psiquiatra || '—')}</strong></div>
-      <div class="info butter">${icon('coin')}<span class="label">Valor de la consulta</span><strong>${money(p.valor)}</strong>
-        <small>${p.valorActualizado ? 'Vigente desde el ' + fmtDMY(p.valorActualizado) : 'Sin valor cargado'}</small>
-        ${pro && proximoValor(p) ? `<small><b>Desde el ${fmtDMY(proximoValor(p).fecha)}: ${money(proximoValor(p).valor)}</b></small>` : ''}
-        ${pro ? `<button class="btn small" data-act="update-fee" data-pid="${p.id}">Actualizar valor</button>` : ''}</div>
-      <div class="info sage full">${icon('pill')}<span class="label">Medicación actual</span><p class="med">${p.medicacion ? esc(p.medicacion) : '—'}</p>
-        ${p.medicacionDesde ? `<small>Desde el ${fmtDMY(p.medicacionDesde)}</small>` : ''}
-        ${pro ? `<button class="btn small" data-act="update-med" data-pid="${p.id}">Registrar cambio de medicación</button>` : ''}</div>
-    </div>`;
+  const dato = (ic, label, val, extra = '') => `<div class="dato"><dt>${icon(ic)}${label}</dt><dd>${val}${extra}</dd></div>`;
+  const prox = pro && proximoValor(p);
+  return `<section class="card datos-card"><dl class="datos">
+      ${dato('id', 'Cédula', esc(p.ci || '—'))}
+      ${dato('cake', 'Fecha de nacimiento', p.fechaNacimiento ? `${fmtDMY(p.fechaNacimiento)} <span class="muted">· ${edad(p.fechaNacimiento)} años</span>` : '—', cumpleHoy(p) ? `<span class="pay bday">${icon('cake')} ¡Hoy cumple años!</span>` : '')}
+      ${dato('phone', 'Teléfono', telLink(p.telefono))}
+      ${dato('mail', 'Mail', p.email ? (pro ? `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>` : esc(p.email)) : '—')}
+      ${dato('heart', 'Contacto de emergencia', esc(p.emergenciaNombre || '—'), p.emergenciaTel ? `<small>${telLink(p.emergenciaTel)}</small>` : '')}
+      ${dato('hospital', 'Institución médica', esc(p.cobertura || '—'))}
+      ${dato('stetho', 'Psiquiatra tratante', esc(p.psiquiatra || '—'))}
+      ${dato('coin', 'Valor de la consulta', money(p.valor),
+        `<small>${p.valorActualizado ? 'Desde el ' + fmtDMY(p.valorActualizado) : 'Sin valor cargado'}</small>${prox ? `<small class="prox">Desde el ${fmtDMY(prox.fecha)}: ${money(prox.valor)}</small>` : ''}${pro ? `<button class="linkbtn" data-act="update-fee" data-pid="${p.id}">Actualizar valor</button>` : ''}`)}
+    </dl>
+    <div class="dato dato-med"><dt>${icon('pill')}Medicación actual</dt>
+      <dd><span class="med">${p.medicacion ? esc(p.medicacion) : '—'}</span>${p.medicacionDesde ? `<small>Desde el ${fmtDMY(p.medicacionDesde)}</small>` : ''}
+      ${pro ? `<button class="linkbtn" data-act="update-med" data-pid="${p.id}">Registrar cambio de medicación</button>` : ''}</dd></div>
+  </section>`;
 }
 function payBadge(s) {
   return isPaid(s)
@@ -1008,7 +1007,7 @@ function consultasHTML(p, { portal = false } = {}) {
       ${portal ? '' : `<td class="c-acc"><button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar consulta">${icon('trash')}</button></td>`}</tr>`;
   };
   const head = `<colgroup><col class="w-fecha"><col class="w-modo"><col class="w-valor"><col class="w-pago"><col class="w-medio">${portal ? '' : '<col class="w-acc">'}</colgroup>
-    <thead><tr><th>Fecha de consulta</th><th>Modalidad / firma</th><th class="num">Valor</th><th>Pago</th><th>Fecha y medio de pago</th>${portal ? '' : '<th></th>'}</tr></thead>`;
+    <thead><tr><th>Fecha</th><th>Modalidad</th><th class="num">Valor</th><th>Pago</th><th>Pagado el / medio</th>${portal ? '' : '<th></th>'}</tr></thead>`;
   const tabla = list => `<div class="ses-wrap"><table class="ses-table">${head}<tbody>${list.map(fila).join('')}</tbody></table></div>`;
   const pend = ss.filter(s => !isPaid(s)), pag = ss.filter(isPaid);
   if (portal) return `
