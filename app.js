@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.2';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -996,22 +996,20 @@ function consultasHTML(p, { portal = false } = {}) {
   const fila = s => {
     const pagada = isPaid(s);
     return `<tr class="${pagada ? 'ok' : 'due'}">
-      <td><strong>${fmtDMY(s.fecha)}</strong> <span class="muted small">${esc(s.hora)} hs</span>${!portal && s.sync !== 'ok' ? ` <span class="cloud pending" title="Pendiente de subir a Drive">${icon('cloud')}</span>` : ''}</td>
-      <td>${isOnline(s)
+      <td class="c-fecha" data-label="Fecha de consulta"><strong>${fmtDMY(s.fecha)}</strong><div class="muted small">${s.hora ? esc(s.hora) + ' hs' : ''}${!portal && s.sync !== 'ok' ? ` <span class="cloud pending" title="Pendiente de subir a Drive">${icon('cloud')}</span>` : ''}</div></td>
+      <td class="c-modo" data-label="Modalidad / firma">${isOnline(s)
         ? `<span class="modo on">${icon('video')} Online</span><div class="muted small">Sin firma</div>`
         : `<span class="modo pre">${icon('pen')} Presencial</span>${!portal && s.firma ? `<img class="firma-mini" src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">` : ''}`}</td>
-      <td class="num">${s.valor != null ? money(s.valor) : '—'}</td>
-      <td>${portal
-        ? (pagada ? `<span class="pay ok">${icon('check')} Paga</span>` : `<span class="pay due">${icon('clock')} No paga</span>`)
+      <td class="c-valor num" data-label="Valor">${s.valor != null ? money(s.valor) : '—'}</td>
+      <td class="c-pago" data-label="Pago">${portal
+        ? (pagada ? `<span class="pay ok">${icon('check')} Paga</span>` : `<button type="button" class="pay pay-tap due" data-act="pay" data-sid="${s.id}" data-by="paciente">${icon('clock')} No paga<span class="pay-hint">registrar pago</span></button>`)
         : `<button type="button" class="pay pay-tap ${pagada ? 'ok' : 'due'}" data-act="pay" data-sid="${s.id}" data-by="profesional" title="${pagada ? 'Tocá para editar o quitar el pago' : 'Tocá para marcar como paga'}">${pagada ? `${icon('check')} Paga` : `${icon('clock')} No paga`}<span class="pay-hint">${pagada ? 'editar' : 'marcar paga'}</span></button>`}</td>
-      <td>${pagada ? `<strong>${fmtDMY(s.pago.fecha)}</strong>${s.pago.medio ? `<div>${esc(s.pago.medio)}</div>` : ''}${!portal && s.pago.por === 'paciente' ? '<div class="muted small">Lo registró el paciente</div>' : ''}` : '<span class="muted">—</span>'}</td>
-      <td class="acc"><div class="acc-in">${portal
-        ? (pagada ? '' : `<button class="btn small primary" data-act="pay" data-sid="${s.id}" data-by="paciente">Registrar pago</button>`)
-        : `<button class="btn small ${pagada ? 'soft' : 'peach'}" data-act="pay" data-sid="${s.id}" data-by="profesional">${pagada ? 'Editar pago' : 'Registrar pago'}</button>
-           <button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar consulta">${icon('trash')}</button>`}</div></td></tr>`;
+      <td class="c-medio" data-label="Fecha y medio de pago">${pagada ? `<strong>${fmtDMY(s.pago.fecha)}</strong>${s.pago.medio ? `<div>${esc(s.pago.medio)}</div>` : ''}${!portal && s.pago.por === 'paciente' ? '<div class="muted small">Lo registró el paciente</div>' : ''}` : '<span class="muted">—</span>'}</td>
+      ${portal ? '' : `<td class="c-acc"><button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar consulta">${icon('trash')}</button></td>`}</tr>`;
   };
-  const head = `<thead><tr><th>Fecha de consulta</th><th>Modalidad / firma</th><th class="num">Valor</th><th>Pago</th><th>Fecha y medio de pago</th><th></th></tr></thead>`;
-  const tabla = list => `<div class="table-wrap"><table class="ses-table">${head}<tbody>${list.map(fila).join('')}</tbody></table></div>`;
+  const head = `<colgroup><col class="w-fecha"><col class="w-modo"><col class="w-valor"><col class="w-pago"><col class="w-medio">${portal ? '' : '<col class="w-acc">'}</colgroup>
+    <thead><tr><th>Fecha de consulta</th><th>Modalidad / firma</th><th class="num">Valor</th><th>Pago</th><th>Fecha y medio de pago</th>${portal ? '' : '<th></th>'}</tr></thead>`;
+  const tabla = list => `<div class="ses-wrap"><table class="ses-table">${head}<tbody>${list.map(fila).join('')}</tbody></table></div>`;
   const pend = ss.filter(s => !isPaid(s)), pag = ss.filter(isPaid);
   if (portal) return `
     <div class="ses-group"><h3 class="ses-h due">${icon('clock')} Pendientes de pago <span>${pend.length}${pend.length ? ' · ' + money(unpaidTotal(pend)) : ''}</span></h3>
