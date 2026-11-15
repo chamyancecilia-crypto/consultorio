@@ -505,9 +505,9 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 .pay-row{padding:10px 16px;gap:10px}
 .pay-date strong{font-size:1.02rem}
 .card.empty.slim{padding:14px}
-/* datos del paciente en columnas */
+/* datos del paciente: uno abajo del otro */
 .datos-card{margin-bottom:16px}
-.datos{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0 22px;margin:0}
+.datos{display:flex;flex-direction:column;gap:0;margin:0}
 .dato{padding:10px 0;border-bottom:1px solid var(--line);min-width:0}
 .dato dt{display:flex;align-items:center;gap:6px;font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:3px}
 .dato dt .ic{width:15px;height:15px;color:var(--lav-d)}
