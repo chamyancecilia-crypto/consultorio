@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.9.3';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1045,7 +1045,7 @@ function consultasHTML(p, { portal = false } = {}) {
       <td class="c-fecha" data-label="Fecha de consulta"><button type="button" class="cell-edit" data-act="edit-session" data-sid="${s.id}" data-by="${portal ? 'paciente' : 'profesional'}" title="${portal ? 'Corregir consulta' : 'Editar consulta'}"><strong>${fmtDMY(s.fecha)}</strong></button><div class="muted small">${s.hora ? esc(s.hora) + ' hs' : ''}${!portal && s.sync !== 'ok' ? ` <span class="cloud pending" title="Pendiente de subir a Drive">${icon('cloud')}</span>` : ''}</div>${!portal && s.editadoPor === 'paciente' ? '<div class="muted small edit-pac">Corregida por el paciente</div>' : ''}</td>
       <td class="c-modo" data-label="Modalidad / firma">${isOnline(s)
         ? `<span class="modo on">${icon('video')} Online</span><div class="muted small">Sin firma</div>`
-        : `<span class="modo pre">${icon('pen')} Presencial</span>${s.firma ? (portal ? '<div class="muted small">Firmada</div>' : `<img class="firma-mini" src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">`) : `<div class="muted small">Sin firma</div>`}`}
+        : `<span class="modo pre">${icon('pen')} Presencial</span>${s.firma ? `<img class="firma-mini" src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">` : `<div class="muted small">Sin firma</div>`}`}
         ${!s.firma ? `<button type="button" class="linkbtn" data-act="sign-session" data-sid="${s.id}">${icon('pen')} Firmar</button>` : ''}</td>
       <td class="c-valor num" data-label="Valor">${s.valor != null ? money(s.valor) : '—'}</td>
       <td class="c-pago" data-label="Pago">${portal
