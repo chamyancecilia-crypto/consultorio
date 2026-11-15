@@ -449,6 +449,14 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 .modo.pre{color:var(--lav-d)}
 .ses-table .firma-mini{margin-top:4px}
 
+/* ---- v1.8.1: tocar "No paga" para marcar el pago ---- */
+.pay-tap{border:0;font:inherit;font-size:.84rem;font-weight:800;cursor:pointer;min-height:40px;padding:6px 14px;transition:transform .12s,box-shadow .15s}
+.pay-tap.due{box-shadow:inset 0 0 0 2px var(--butter-d)}
+.pay-tap:hover{box-shadow:inset 0 0 0 2px currentColor}
+.pay-tap:active{transform:scale(.95)}
+.pay-tap:focus-visible{outline:3px solid var(--lav-d);outline-offset:2px}
+.pay-hint{font-weight:600;font-size:.74rem;opacity:.75;margin-left:4px;text-decoration:underline}
+
 /* ============ IMPRESIÓN ============ */
 @media print{
   body{background:#fff;font-size:12pt}
