@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.9.3';
+const APP_VERSION = '1.9.4';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
