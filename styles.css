@@ -561,6 +561,12 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 .c-modo .linkbtn .ic{width:1em;height:1em}
 .edit-pac{color:var(--peach-d) !important;font-weight:700}
 
+/* ---- v1.9.6: nueva consulta manual ---- */
+.btn.butter{background:var(--butter);color:#6F5B17;box-shadow:none}
+.check-line{display:flex;align-items:center;gap:10px;margin-top:10px;font-weight:700;font-size:.92rem;color:var(--ink);cursor:pointer}
+.check-line[hidden]{display:none}
+.check-line input{width:22px;height:22px;accent-color:var(--lav-d);flex:none}
+
 /* ============ IMPRESIÓN ============ */
 .pr-count{margin:4px 0 0;font-weight:700}
 @media print{
