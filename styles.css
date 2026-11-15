@@ -411,6 +411,44 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 .fee-hist .down{color:var(--rose-d);font-weight:800}
 .fee-hist .chip{margin-top:0}
 
+/* ---- v1.7: historial de medicación y lista de consultas ---- */
+.med-card .section-title h2 .ic{color:var(--sage-d)}
+.med-txt{white-space:pre-line}
+.med-row{grid-template-columns:2fr 1fr}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.tab{border:0;border-radius:999px;min-height:44px;padding:0 18px;background:rgba(255,255,255,.85);box-shadow:var(--shadow-sm);font:inherit;font-weight:700;color:var(--ink-soft);cursor:pointer}
+.tab span{display:inline-block;min-width:24px;margin-left:4px;padding:1px 8px;border-radius:999px;background:var(--line);font-size:.82rem;color:var(--ink)}
+.tab.on{background:var(--lav);color:#4E4380;box-shadow:inset 0 0 0 2px var(--lav-d)}
+.ses-card{padding:8px 16px}
+.ses-table{width:100%;border-collapse:collapse}
+.ses-table th{text-align:left;font-size:.76rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);padding:10px 8px;border-bottom:2px solid var(--line);white-space:nowrap}
+.ses-table td{padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+.ses-table tr:last-child td{border-bottom:0}
+.ses-table .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ses-table tr.due td:first-child{box-shadow:inset 4px 0 0 var(--butter-d)}
+.ses-table tr.ok td:first-child{box-shadow:inset 4px 0 0 var(--sage-d)}
+.ses-table td:first-child{white-space:nowrap}
+.ses-table .acc{text-align:right;white-space:nowrap}
+.acc-in{display:flex;gap:6px;justify-content:flex-end;align-items:center}
+.ses-table .pay{white-space:nowrap}
+.ses-table .cloud .ic{width:1em;height:1em}
+.firma-mini{height:40px;max-width:120px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:8px;display:block}
+.ses-group{background:rgba(255,255,255,.88);border-radius:var(--r-lg);padding:14px 18px;box-shadow:var(--shadow-sm)}
+.ses-h{display:flex;align-items:center;gap:8px;font-size:1.1rem;margin:4px 0 6px}
+.ses-h span{margin-left:auto;font-size:.95rem;font-weight:800;padding:2px 12px;border-radius:999px}
+.ses-h.due{color:#6F5B17}.ses-h.due span{background:var(--butter)}
+.ses-h.ok{color:#3D6650}.ses-h.ok span{background:var(--sage)}
+.ses-none{padding:10px 4px}
+@media (max-width:700px){ .med-row{grid-template-columns:1fr} }
+
+/* ---- v1.8: consultas online ---- */
+.btn.sky{background:var(--sky);color:#3F6688;box-shadow:none}
+.modo{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:.86rem;white-space:nowrap}
+.modo .ic{width:1.05em;height:1.05em}
+.modo.on{color:var(--sky-d)}
+.modo.pre{color:var(--lav-d)}
+.ses-table .firma-mini{margin-top:4px}
+
 /* ============ IMPRESIÓN ============ */
 @media print{
   body{background:#fff;font-size:12pt}
