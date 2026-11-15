@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.8.0';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -105,6 +105,16 @@ const DEFAULTS = {
 const MEDIOS = ['Efectivo', 'Transferencia', 'Débito', 'Crédito', 'Mercado Pago', 'Otro'];
 const COBERTURAS = ['Particular', 'ASSE', 'CASMU', 'Médica Uruguaya', 'Española', 'SMI', 'Hospital Británico', 'Hospital Evangélico', 'COSEM', 'Círculo Católico', 'CUDAM', 'MP', 'Universal', 'GREMCA', 'Blue Cross', 'Seguro Americano'];
 const isPaid = s => !!(s.pago && s.pago.fecha);
+const isOnline = s => s.modalidad === 'online';
+async function crearOnline(p, { fecha = isoDate(), hora = hhmm(new Date()), ev = null, nota = '' } = {}) {
+  const s = {
+    id: uid(), patientId: p.id, fecha, hora, firma: null, modalidad: 'online', nota,
+    valor: (valorVigente(p, fecha) || {}).valor ?? p.valor ?? null,
+    eventId: ev?.id || null, eventTitulo: ev?.title || null, eventInicio: ev?.start || null,
+    creado: new Date().toISOString(), sync: 'pending',
+  };
+  await DB.put('sessions', s); S.sessions.push(s); syncAll(); return s;
+}
 /* ---- honorarios: historial de cambios ---- */
 const histOrden = p => (p.valorHistorial || []).filter(h => h && h.fecha && h.valor != null)
   .sort((a, b) => (a.fecha + (a.reg || '')).localeCompare(b.fecha + (b.reg || '')));
@@ -115,7 +125,26 @@ function aplicarHonorarios(p) {   // el valor de la ficha es siempre el vigente 
   (p.valorHistorial || []).forEach(h => { if (!h.id) h.id = uid(); });
   const v = valorVigente(p);
   if (v) { p.valor = v.valor; p.valorActualizado = v.fecha; }
+  aplicarMedicacion(p);
   return p;
+}
+/* ---- medicación: historial de cambios ---- */
+const medOrden = p => (p.medicacionHistorial || []).filter(m => m && m.fecha)
+  .sort((a, b) => (a.fecha + (a.reg || '')).localeCompare(b.fecha + (b.reg || '')));
+function medVigente(p, iso = isoDate()) { const h = medOrden(p).filter(x => x.fecha <= iso); return h.length ? h[h.length - 1] : null; }
+function aplicarMedicacion(p) {   // la medicación de la ficha es siempre la vigente hoy
+  if (!(p.medicacionHistorial || []).length && p.medicacion) {
+    const reg = p.actualizado || p.creado || new Date().toISOString();
+    p.medicacionHistorial = [{ id: uid(), texto: p.medicacion, fecha: reg.slice(0, 10), nota: '', reg }];
+  }
+  (p.medicacionHistorial || []).forEach(h => { if (!h.id) h.id = uid(); });
+  const v = medVigente(p);
+  if (v) { p.medicacion = v.texto; p.medicacionDesde = v.fecha; } else if (!medOrden(p).length) p.medicacionDesde = null;
+  return p;
+}
+function nuevaMedicacion(p, texto, fecha, nota = '') {
+  p.medicacionHistorial = [...(p.medicacionHistorial || []), { id: uid(), texto: texto || '', fecha, nota, reg: new Date().toISOString() }];
+  aplicarMedicacion(p);
 }
 function nuevoHonorario(p, valor, fecha, nota = '') {
   p.valorHistorial = [...(p.valorHistorial || []), { id: uid(), valor, fecha, nota, reg: new Date().toISOString() }];
@@ -262,6 +291,7 @@ const patientPayload = p => ({
   valor: p.valor, valorActualizado: p.valorActualizado, valorHistorial: histOrden(p),
   email: p.email || '', cobertura: p.cobertura || '', psiquiatra: p.psiquiatra || '', medicacion: p.medicacion || '',
   fechaNacimiento: p.fechaNacimiento || '',
+  medicacionHistorial: medOrden(p).map(m => ({ texto: m.texto, fecha: m.fecha, nota: m.nota || '', reg: m.reg })),
 });
 
 async function syncAll({ manual = false } = {}) {
@@ -271,6 +301,30 @@ async function syncAll({ manual = false } = {}) {
   S.syncing = true; S.syncError = null; refreshSyncUI();
   let n = 0;
   try {
+    // una sola vez: cuando el script ya tiene la columna "Estado de pago", se reenvía todo para completar la planilla
+    if (!S.settings.resync16) {
+      const r = await api('ping', {}, 'GET');
+      if ((r.version || 0) >= 16) {
+        S.patients.forEach(p => { p.sync = 'pending'; }); S.sessions.forEach(s => { if (!s.deleted) s.sync = 'pending'; });
+        await DB.putMany('patients', S.patients); await DB.putMany('sessions', S.sessions);
+        S.settings.resync16 = true; await saveSettings(); refreshSyncUI();
+      }
+    }
+    // una sola vez: completar la hoja "Medicación" con lo que ya estaba cargado
+    if (!S.settings.resync17) {
+      const r = await api('ping', {}, 'GET');
+      if ((r.version || 0) >= 17) {
+        S.patients.forEach(p => { p.sync = 'pending'; }); await DB.putMany('patients', S.patients);
+        S.settings.resync17 = true; await saveSettings(); refreshSyncUI();
+      }
+    }
+    if (!S.settings.resync18) {
+      const r = await api('ping', {}, 'GET');
+      if ((r.version || 0) >= 18) {
+        S.sessions.forEach(s => { if (!s.deleted) s.sync = 'pending'; }); await DB.putMany('sessions', S.sessions);
+        S.settings.resync18 = true; await saveSettings(); refreshSyncUI();
+      }
+    }
     for (const p of S.patients.filter(p => p.sync !== 'ok')) {
       if (p.deleted) await api('deletePatient', { id: p.id });
       else await api('upsertPatient', { patient: patientPayload(p) });
@@ -662,8 +716,9 @@ function viewToday(main) {
         ${p && diasParaCumple(p.fechaNacimiento) === 0 && day === today ? `<span class="chip bday">${icon('cake')} Cumple años hoy</span> ` : ''}
         ${p ? `<span class="chip ok">${icon('user')} ${esc(p.nombre)}</span>` : `<span class="chip warn">${icon('info')} Sin paciente vinculado</span>`}</div>
       <div class="ev-actions">
-        ${s ? `<span class="badge-ok">${icon('check')} Firmó ${esc(s.hora)}</span>` : past && p ? `<span class="chip miss">No firmó</span>` : ''}
+        ${s ? (isOnline(s) ? `<span class="badge-ok">${icon('check')} Online</span>` : `<span class="badge-ok">${icon('check')} Firmó ${esc(s.hora)}</span>`) : past && p ? `<span class="chip miss">No firmó</span>` : ''}
         ${p && !s && day === today && !past ? `<button class="btn primary small" data-act="sign-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('pen')} Pasar a firma</button>` : ''}
+        ${p && !s && day <= today ? `<button class="btn sky small" data-act="online-for" data-pid="${p.id}" data-eid="${esc(ev.id)}">${icon('video')} Online</button>` : ''}
         ${p ? `<button class="btn soft small" data-act="open-patient" data-pid="${p.id}">Ficha</button>` : `
           <button class="btn sage small" data-act="new-from-event" data-eid="${esc(ev.id)}">${icon('plus')} Crear ficha</button>
           <button class="btn soft small" data-act="link-event" data-eid="${esc(ev.id)}">${icon('link')} Vincular</button>`}
@@ -772,10 +827,15 @@ function patientForm(p = null, prefill = {}) {
             <span class="hint">Si no tiene, poné «Particular».</span></div>
           <div class="field"><label for="pf-psq">Psiquiatra tratante</label><input id="pf-psq" name="psiquiatra" placeholder="Nombre y teléfono" value="${esc(d.psiquiatra || '')}"></div>
         </div>
-        <div class="field"><label for="pf-med">Medicación actual</label><textarea id="pf-med" name="medicacion" rows="3" placeholder="Medicamento, dosis y horario">${esc(d.medicacion || '')}</textarea></div>
+        <div class="row2 med-row">
+          <div class="field"><label for="pf-med">Medicación actual</label><textarea id="pf-med" name="medicacion" rows="3" placeholder="Medicamento, dosis y horario">${esc(d.medicacion || '')}</textarea></div>
+          <div class="field"><label for="pf-medf">Desde (fecha)</label><input id="pf-medf" name="medDesde" type="date" value="${isoDate()}"><span class="hint">${p ? 'Si cambiás la medicación, queda en el historial con esta fecha.' : 'Fecha desde la que toma esta medicación.'}</span></div>
+        </div>
         <p class="form-sec">Consulta</p>
-        <div class="field"><label for="pf-val">Valor de la consulta</label><div class="prefix"><span>$</span><input id="pf-val" name="valor" inputmode="numeric" placeholder="0" value="${d.valor ?? ''}"></div>
-          ${p ? '<span class="hint">Si lo cambiás, se guarda en el historial con la fecha de hoy.</span>' : ''}</div>
+        <div class="row2">
+          <div class="field"><label for="pf-val">Valor de la consulta</label><div class="prefix"><span>$</span><input id="pf-val" name="valor" inputmode="numeric" placeholder="0" value="${d.valor ?? ''}"></div></div>
+          <div class="field"><label for="pf-valf">Vigente desde</label><input id="pf-valf" name="valDesde" type="date" value="${isoDate()}"><span class="hint">${p ? 'Si cambiás el valor, queda en el historial con esta fecha.' : 'Fecha desde la que rige este valor.'}</span></div>
+        </div>
         <div class="modal-actions">
           ${p ? `<button type="button" class="btn danger" id="pf-del">${icon('trash')} Eliminar</button><span class="spacer"></span>` : ''}
           <button type="button" class="btn ghost" id="pf-cancel">Cancelar</button>
@@ -806,14 +866,18 @@ function patientForm(p = null, prefill = {}) {
 }
 async function savePatientFromForm(p, v) {
   const today = isoDate(); const now = new Date().toISOString();
+  const valDesde = v.valDesde || today, medDesde = v.medDesde || today;
+  delete v.valDesde; delete v.medDesde;
+  const nuevo = v.valor, med = v.medicacion || ''; delete v.valor; delete v.medicacion;
   if (!p) {
-    p = { id: uid(), creado: now, valorHistorial: [], ...v };
-    if (v.valor != null) nuevoHonorario(p, v.valor, today, 'Valor inicial');
+    p = { id: uid(), creado: now, valorHistorial: [], medicacionHistorial: [], ...v };
+    if (nuevo != null) nuevoHonorario(p, nuevo, valDesde, 'Valor inicial');
+    if (med) nuevaMedicacion(p, med, medDesde);
     S.patients.push(p);
   } else {
-    const nuevo = v.valor; delete v.valor;
     Object.assign(p, v);
-    if (nuevo != null && nuevo !== p.valor) nuevoHonorario(p, nuevo, today);
+    if (nuevo != null && nuevo !== p.valor) nuevoHonorario(p, nuevo, valDesde);
+    if (med !== (p.medicacion || '')) nuevaMedicacion(p, med, medDesde);
   }
   p.actualizado = now; p.sync = 'pending';
   await DB.put('patients', p); syncAll();
@@ -845,7 +909,9 @@ function infoCards(p, { pro = false } = {}) {
         <small>${p.valorActualizado ? 'Vigente desde el ' + fmtDMY(p.valorActualizado) : 'Sin valor cargado'}</small>
         ${pro && proximoValor(p) ? `<small><b>Desde el ${fmtDMY(proximoValor(p).fecha)}: ${money(proximoValor(p).valor)}</b></small>` : ''}
         ${pro ? `<button class="btn small" data-act="update-fee" data-pid="${p.id}">Actualizar valor</button>` : ''}</div>
-      <div class="info sage full">${icon('pill')}<span class="label">Medicación actual</span><p class="med">${p.medicacion ? esc(p.medicacion) : '—'}</p></div>
+      <div class="info sage full">${icon('pill')}<span class="label">Medicación actual</span><p class="med">${p.medicacion ? esc(p.medicacion) : '—'}</p>
+        ${p.medicacionDesde ? `<small>Desde el ${fmtDMY(p.medicacionDesde)}</small>` : ''}
+        ${pro ? `<button class="btn small" data-act="update-med" data-pid="${p.id}">Registrar cambio de medicación</button>` : ''}</div>
     </div>`;
 }
 function payBadge(s) {
@@ -892,25 +958,69 @@ function viewPatient(main) {
         <p class="muted">${ss.length} ${ss.length === 1 ? 'sesión firmada' : 'sesiones firmadas'}${ss[0] ? ' · última el ' + fmtDMY(ss[0].fecha) : ''}</p></div>
       <div class="actions">
         <button class="btn primary" data-act="sign-for" data-pid="${p.id}">${icon('pen')} Pasar a firma</button>
+        <button class="btn sky" data-act="add-online" data-pid="${p.id}">${icon('video')} Consulta online</button>
         <button class="btn soft" data-act="edit-patient" data-pid="${p.id}">${icon('edit')} Editar</button>
         <button class="btn soft" data-act="print-patient" data-pid="${p.id}">${icon('print')} PDF</button>
       </div></header>
     ${infoCards(p, { pro: true })}
     ${honorariosHTML(p)}
+    ${medicacionHTML(p)}
     ${citasHTML(p)}
-    <div class="section-title"><h2>Sesiones y pagos</h2></div>
+    <div class="section-title"><h2>Consultas y pagos</h2></div>
     ${unpaidSummary(p.id)}
-    ${ss.length ? `<div class="s-grid">${ss.map(s => `<div class="s-card ${isPaid(s) ? 'paid' : ''}">
-      <div class="top"><div><strong>${fmtDMY(s.fecha)}</strong><div class="meta">${esc(s.hora)} hs${s.valor != null ? ' · ' + money(s.valor) : ''}</div></div>
-        <button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar firma">${icon('trash')}</button></div>
-      <img src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">
-      ${payBadge(s)}
-      ${isPaid(s) && s.pago.por === 'paciente' ? '<span class="meta">Registrado por el paciente</span>' : ''}
-      <div class="s-foot">
-        <button class="btn small ${isPaid(s) ? 'soft' : 'peach'}" data-act="pay" data-sid="${s.id}" data-by="profesional">${isPaid(s) ? 'Editar pago' : 'Registrar pago'}</button>
-        <span class="cloud ${s.sync === 'ok' ? 'ok' : 'pending'}">${icon('cloud')} ${s.sync === 'ok' ? (s.driveUrl ? `<a href="${esc(s.driveUrl)}" target="_blank" rel="noopener" style="color:inherit">En Drive</a>` : 'En Drive') : 'Pendiente de subir'}</span>
-      </div>
-    </div>`).join('')}</div>` : `<div class="card empty">${icon('pen')}<p>Todavía no hay firmas.</p></div>`}`;
+    ${consultasHTML(p)}`;
+}
+function medicacionHTML(p) {
+  const h = medOrden(p); if (!h.length) return '';
+  const vig = medVigente(p); const hoy = isoDate();
+  const filas = h.map(x => {
+    const estado = x.fecha > hoy ? '<span class="chip warn">Programada</span>' : vig && vig.id === x.id ? '<span class="chip ok">Actual</span>' : '';
+    return `<tr class="${vig && vig.id === x.id ? 'vig' : ''}">
+      <td><strong>${fmtDMY(x.fecha)}</strong></td>
+      <td class="med-txt">${x.texto ? esc(x.texto) : '<span class="muted">Sin medicación</span>'} ${estado}${x.nota ? `<div class="muted small">${esc(x.nota)}</div>` : ''}</td>
+      <td class="muted small">${x.reg ? fmtDMY(x.reg.slice(0, 10)) : '—'}</td>
+      <td class="num"><button class="icon-btn sm soft" data-act="del-med" data-pid="${p.id}" data-hid="${esc(x.id)}" aria-label="Borrar este registro">${icon('trash')}</button></td></tr>`;
+  }).reverse().join('');
+  return `<section class="card fee-card med-card">
+    <div class="section-title" style="margin-top:0"><h2>${icon('pill')} Historial de medicación</h2>
+      <button class="btn small sage" data-act="update-med" data-pid="${p.id}">${icon('plus')} Registrar cambio</button></div>
+    <div class="table-wrap"><table class="fee-hist">
+      <thead><tr><th>Desde</th><th>Medicación</th><th>Registrado</th><th></th></tr></thead>
+      <tbody>${filas}</tbody></table></div>
+  </section>`;
+}
+/* --------- Lista de consultas (ficha y portal) --------- */
+function consultasHTML(p, { portal = false } = {}) {
+  const ss = sessionsOf(p.id);
+  if (!ss.length) return `<div class="card empty slim"><p>${portal ? 'Todavía no tenés consultas firmadas.' : 'Todavía no hay consultas firmadas.'}</p></div>`;
+  const fila = s => {
+    const pagada = isPaid(s);
+    return `<tr class="${pagada ? 'ok' : 'due'}">
+      <td><strong>${fmtDMY(s.fecha)}</strong> <span class="muted small">${esc(s.hora)} hs</span>${!portal && s.sync !== 'ok' ? ` <span class="cloud pending" title="Pendiente de subir a Drive">${icon('cloud')}</span>` : ''}</td>
+      <td>${isOnline(s)
+        ? `<span class="modo on">${icon('video')} Online</span><div class="muted small">Sin firma</div>`
+        : `<span class="modo pre">${icon('pen')} Presencial</span>${!portal && s.firma ? `<img class="firma-mini" src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">` : ''}`}</td>
+      <td class="num">${s.valor != null ? money(s.valor) : '—'}</td>
+      <td>${pagada ? `<span class="pay ok">${icon('check')} Paga</span>` : `<span class="pay due">${icon('clock')} No paga</span>`}</td>
+      <td>${pagada ? `<strong>${fmtDMY(s.pago.fecha)}</strong>${s.pago.medio ? `<div>${esc(s.pago.medio)}</div>` : ''}${!portal && s.pago.por === 'paciente' ? '<div class="muted small">Lo registró el paciente</div>' : ''}` : '<span class="muted">—</span>'}</td>
+      <td class="acc"><div class="acc-in">${portal
+        ? (pagada ? '' : `<button class="btn small primary" data-act="pay" data-sid="${s.id}" data-by="paciente">Registrar pago</button>`)
+        : `<button class="btn small ${pagada ? 'soft' : 'peach'}" data-act="pay" data-sid="${s.id}" data-by="profesional">${pagada ? 'Editar pago' : 'Registrar pago'}</button>
+           <button class="icon-btn sm soft" data-act="del-session" data-sid="${s.id}" aria-label="Eliminar consulta">${icon('trash')}</button>`}</div></td></tr>`;
+  };
+  const head = `<thead><tr><th>Fecha de consulta</th><th>Modalidad / firma</th><th class="num">Valor</th><th>Pago</th><th>Fecha y medio de pago</th><th></th></tr></thead>`;
+  const tabla = list => `<div class="table-wrap"><table class="ses-table">${head}<tbody>${list.map(fila).join('')}</tbody></table></div>`;
+  const pend = ss.filter(s => !isPaid(s)), pag = ss.filter(isPaid);
+  if (portal) return `
+    <div class="ses-group"><h3 class="ses-h due">${icon('clock')} Pendientes de pago <span>${pend.length}${pend.length ? ' · ' + money(unpaidTotal(pend)) : ''}</span></h3>
+      ${pend.length ? tabla(pend) : '<p class="muted ses-none">No tenés consultas pendientes de pago.</p>'}</div>
+    <div class="ses-group"><h3 class="ses-h ok">${icon('check')} Pagadas <span>${pag.length}</span></h3>
+      ${pag.length ? tabla(pag) : '<p class="muted ses-none">Todavía no hay consultas pagas.</p>'}</div>`;
+  const f = S.params.f || 'todas';
+  const list = f === 'pend' ? pend : f === 'pag' ? pag : ss;
+  const tab = (k, label, n) => `<button class="tab ${f === k ? 'on' : ''}" data-act="ses-filter" data-f="${k}" aria-pressed="${f === k}">${label} <span>${n}</span></button>`;
+  return `<div class="tabs">${tab('todas', 'Todas', ss.length)}${tab('pend', 'Pendientes', pend.length)}${tab('pag', 'Pagadas', pag.length)}</div>
+    <div class="card ses-card">${list.length ? tabla(list) : '<p class="muted ses-none">No hay consultas en este filtro.</p>'}</div>`;
 }
 
 /* --------- Registrar pago (paciente o profesional) --------- */
@@ -1002,12 +1112,7 @@ function renderPortal(app) {
     ${ahoraHTML(p)}
     ${citasHTML(p, { portal: true })}
     <div class="section-title"><h2>Tus consultas y pagos</h2></div>
-    ${unpaidSummary(p.id)}
-    ${ss.length ? `<div class="pay-list">${ss.map(s => `<div class="pay-row ${isPaid(s) ? 'paid' : ''}">
-        <div class="pay-date"><strong>${fmtDMY(s.fecha)}</strong><span>${esc(s.hora)} hs${s.valor != null ? ' · ' + money(s.valor) : ''}</span></div>
-        <div class="pay-state">${payBadge(s)}</div>
-        ${isPaid(s) ? '' : `<button class="btn primary" data-act="pay" data-sid="${s.id}" data-by="paciente">Registrar pago</button>`}
-      </div>`).join('')}</div>` : `<div class="card empty slim"><p>Todavía no tenés consultas firmadas.</p></div>`}
+    ${consultasHTML(p, { portal: true })}
     <details class="card portal-data"><summary>Ver mis datos</summary>${infoCards(p)}
       <p class="muted small">Si algún dato no está bien, avisale a tu terapeuta para corregirlo.</p></details>
     <p class="muted small" style="text-align:center">Por privacidad, esta pantalla se cierra sola a los ${S.settings.portalMin || 2} minutos sin uso.</p>
@@ -1025,14 +1130,16 @@ function printPatient(p) {
       <div><b>Mail:</b> ${esc(p.email || '—')}</div>
       <div><b>Contacto de emergencia:</b> ${esc(p.emergenciaNombre || '—')} ${esc(p.emergenciaTel || '')}</div>
       <div><b>Institución médica:</b> ${esc(p.cobertura || '—')}</div><div><b>Psiquiatra tratante:</b> ${esc(p.psiquiatra || '—')}</div>
-      <div style="grid-column:1/-1"><b>Medicación actual:</b> ${esc(p.medicacion || '—')}</div>
+      <div style="grid-column:1/-1"><b>Medicación actual:</b> ${esc(p.medicacion || '—')}${p.medicacionDesde ? ' (desde ' + fmtDMY(p.medicacionDesde) + ')' : ''}</div>
       <div><b>Valor de la consulta:</b> ${money(p.valor)}${p.valorActualizado ? ' (desde ' + fmtDMY(p.valorActualizado) + ')' : ''}</div>
     </div>
     ${histOrden(p).length ? `<h3 style="margin:0 0 6pt">Historial de honorarios</h3><table style="margin-bottom:16pt"><thead><tr><th>Vigente desde</th><th>Monto</th><th>Variación</th><th>Nota</th></tr></thead>
       <tbody>${histOrden(p).map((x, i, a) => { const v = variacion(a[i - 1]?.valor, x.valor); return `<tr><td>${fmtDMY(x.fecha)}</td><td>${money(x.valor)}</td><td>${v == null ? '—' : (v > 0 ? '+' : '') + String(v).replace('.', ',') + ' %'}</td><td>${esc(x.nota || '')}</td></tr>`; }).join('')}</tbody></table>` : ''}
+    ${medOrden(p).length ? `<h3 style="margin:0 0 6pt">Historial de medicación</h3><table style="margin-bottom:16pt"><thead><tr><th>Desde</th><th>Medicación</th><th>Nota</th></tr></thead>
+      <tbody>${medOrden(p).map(x => `<tr><td>${fmtDMY(x.fecha)}</td><td style="white-space:pre-line">${x.texto ? esc(x.texto) : 'Sin medicación'}</td><td>${esc(x.nota || '')}</td></tr>`).join('')}</tbody></table>` : ''}
     <h3 style="margin:0 0 6pt">Sesiones</h3>
-    <table><thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Valor</th><th>Pago</th><th>Firma</th></tr></thead>
-    <tbody>${ss.map((s, i) => `<tr><td>${i + 1}</td><td>${fmtDMY(s.fecha)}</td><td>${esc(s.hora)}</td><td>${s.valor != null ? money(s.valor) : '—'}</td><td>${isPaid(s) ? fmtDMY(s.pago.fecha) + (s.pago.medio ? '<br><small>' + esc(s.pago.medio) + '</small>' : '') : 'Pendiente'}</td><td><img src="${s.firma}"></td></tr>`).join('')}</tbody></table>
+    <table><thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Modalidad</th><th>Valor</th><th>Pago</th><th>Firma</th></tr></thead>
+    <tbody>${ss.map((s, i) => `<tr><td>${i + 1}</td><td>${fmtDMY(s.fecha)}</td><td>${esc(s.hora)}</td><td>${isOnline(s) ? 'Online' : 'Presencial'}</td><td>${s.valor != null ? money(s.valor) : '—'}</td><td>${isPaid(s) ? fmtDMY(s.pago.fecha) + (s.pago.medio ? '<br><small>' + esc(s.pago.medio) + '</small>' : '') : 'Pendiente'}</td><td>${s.firma ? `<img src="${s.firma}">` : 'Sin firma (online)'}</td></tr>`).join('')}</tbody></table>
     <p style="color:#888;margin-top:14pt;font-size:9pt">Generado el ${fmtDMY(isoDate())} ${hhmm(new Date())}</p>`;
   setTimeout(() => window.print(), 200);
 }
@@ -1163,6 +1270,65 @@ const ACTIONS = {
         };
       },
     });
+  },
+  'ses-filter': el => { S.params.f = el.dataset.f; render(); },
+  'online-for': async el => {
+    const p = patientById(el.dataset.pid); const ev = findEvent(el.dataset.eid); if (!p || !ev) return;
+    if (!(await confirmBox('Consulta online', `¿Registrar la consulta de ${p.nombre} del ${fmtDMY(isoDate(evStart(ev)))} a las ${hhmm(evStart(ev))} como online, sin firma?`, 'Registrar online'))) return;
+    await crearOnline(p, { fecha: isoDate(evStart(ev)), hora: hhmm(evStart(ev)), ev });
+    render(); toast('Consulta online registrada', 'ok');
+  },
+  'add-online': el => {
+    const p = patientById(el.dataset.pid);
+    openModal(`<h2>Registrar consulta online</h2><p class="muted">Queda registrada sin firma, como consulta online de ${esc(p.nombre)}.</p>
+      <form id="of"><div class="row2">
+        <div class="field"><label for="of-f">Fecha de la consulta</label><input id="of-f" name="f" type="date" required max="${isoDate()}" value="${isoDate()}"></div>
+        <div class="field"><label for="of-h">Hora</label><input id="of-h" name="h" type="time" value="${hhmm(new Date())}"></div></div>
+        <div class="field"><label for="of-n">Nota (opcional)</label><input id="of-n" name="n" placeholder="Ej: videollamada por Zoom"></div>
+        <p class="hint muted small" id="of-v"></p>
+        <div class="modal-actions"><button type="button" class="btn ghost" id="oc">Cancelar</button><button class="btn primary">${icon('check')} Registrar</button></div>
+      </form>`, {
+      onMount: m => {
+        const showVal = () => { const v = (valorVigente(p, $('#of-f', m).value) || {}).valor; $('#of-v', m).textContent = v != null ? `Valor de la consulta para esa fecha: ${money(v)}` : ''; };
+        $('#of-f', m).addEventListener('change', showVal); showVal();
+        $('#oc', m).onclick = closeModal;
+        $('#of', m).onsubmit = async e => {
+          e.preventDefault(); const f = e.target;
+          await crearOnline(p, { fecha: f.f.value || isoDate(), hora: f.h.value || '', nota: f.n.value.trim() });
+          closeModal(); render(); toast('Consulta online registrada', 'ok');
+        };
+      },
+    });
+  },
+  'update-med': el => {
+    const p = patientById(el.dataset.pid);
+    openModal(`<h2>Registrar cambio de medicación</h2>
+      <p class="muted">Actual: <strong>${p.medicacion ? esc(p.medicacion) : 'sin medicación cargada'}</strong>${p.medicacionDesde ? ' (desde el ' + fmtDMY(p.medicacionDesde) + ')' : ''}</p>
+      <form id="mf">
+        <div class="field"><label for="mf-t">Nueva medicación</label><textarea id="mf-t" name="t" rows="4" placeholder="Medicamento, dosis y horario. Dejalo vacío si suspendió la medicación.">${esc(p.medicacion || '')}</textarea></div>
+        <div class="row2"><div class="field"><label for="mf-f">Desde (fecha)</label><input id="mf-f" name="f" type="date" required value="${isoDate()}"></div>
+        <div class="field"><label for="mf-n">Nota (opcional)</label><input id="mf-n" name="n" placeholder="Ej: indicado por el psiquiatra"></div></div>
+        <div class="modal-actions"><button type="button" class="btn ghost" id="mc">Cancelar</button><button class="btn primary">${icon('check')} Guardar</button></div>
+      </form>`, {
+      wide: true,
+      onMount: m => {
+        $('#mc', m).onclick = closeModal; setTimeout(() => $('#mf-t', m).focus(), 50);
+        $('#mf', m).onsubmit = async e => {
+          e.preventDefault(); const f = e.target;
+          nuevaMedicacion(p, f.t.value.trim(), f.f.value || isoDate(), f.n.value.trim());
+          p.actualizado = new Date().toISOString(); p.sync = 'pending'; await DB.put('patients', p);
+          closeModal(); render(); toast('Medicación registrada', 'ok'); syncAll();
+        };
+      },
+    });
+  },
+  'del-med': async el => {
+    const p = patientById(el.dataset.pid); const h = (p.medicacionHistorial || []).find(x => x.id === el.dataset.hid); if (!h) return;
+    if (!(await confirmBox('Borrar registro de medicación', `¿Borrar el registro del ${fmtDMY(h.fecha)}? Usalo solo si lo cargaste por error.`, 'Borrar', true))) return;
+    p.medicacionHistorial = p.medicacionHistorial.filter(x => x.id !== h.id); aplicarMedicacion(p);
+    if (!medOrden(p).length) { p.medicacion = ''; p.medicacionDesde = null; }
+    p.actualizado = new Date().toISOString(); p.sync = 'pending'; await DB.put('patients', p);
+    render(); toast('Registro borrado'); syncAll();
   },
   'del-fee': async el => {
     const p = patientById(el.dataset.pid); const h = (p.valorHistorial || []).find(x => x.id === el.dataset.hid); if (!h) return;
