@@ -555,6 +555,12 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 #ef-pago{margin-top:-4px}
 @media (max-width:620px){ .ses-table .c-fecha{padding-right:90px} }
 
+/* ---- v1.9.2: el paciente corrige y firma después ---- */
+.ses-table col.w-acc1{width:46px}
+.c-modo .linkbtn{display:inline-flex;align-items:center;gap:4px;margin-top:4px}
+.c-modo .linkbtn .ic{width:1em;height:1em}
+.edit-pac{color:var(--peach-d) !important;font-weight:700}
+
 /* ============ IMPRESIÓN ============ */
 @media print{
   body{background:#fff;font-size:12pt}
