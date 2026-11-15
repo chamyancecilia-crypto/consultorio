@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1001,7 +1001,9 @@ function consultasHTML(p, { portal = false } = {}) {
         ? `<span class="modo on">${icon('video')} Online</span><div class="muted small">Sin firma</div>`
         : `<span class="modo pre">${icon('pen')} Presencial</span>${!portal && s.firma ? `<img class="firma-mini" src="${s.firma}" alt="Firma del ${fmtDMY(s.fecha)}">` : ''}`}</td>
       <td class="num">${s.valor != null ? money(s.valor) : '—'}</td>
-      <td>${pagada ? `<span class="pay ok">${icon('check')} Paga</span>` : `<span class="pay due">${icon('clock')} No paga</span>`}</td>
+      <td>${portal
+        ? (pagada ? `<span class="pay ok">${icon('check')} Paga</span>` : `<span class="pay due">${icon('clock')} No paga</span>`)
+        : `<button type="button" class="pay pay-tap ${pagada ? 'ok' : 'due'}" data-act="pay" data-sid="${s.id}" data-by="profesional" title="${pagada ? 'Tocá para editar o quitar el pago' : 'Tocá para marcar como paga'}">${pagada ? `${icon('check')} Paga` : `${icon('clock')} No paga`}<span class="pay-hint">${pagada ? 'editar' : 'marcar paga'}</span></button>`}</td>
       <td>${pagada ? `<strong>${fmtDMY(s.pago.fecha)}</strong>${s.pago.medio ? `<div>${esc(s.pago.medio)}</div>` : ''}${!portal && s.pago.por === 'paciente' ? '<div class="muted small">Lo registró el paciente</div>' : ''}` : '<span class="muted">—</span>'}</td>
       <td class="acc"><div class="acc-in">${portal
         ? (pagada ? '' : `<button class="btn small primary" data-act="pay" data-sid="${s.id}" data-by="paciente">Registrar pago</button>`)
