@@ -532,6 +532,29 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 .ses-group{padding:10px 14px}
 @media (max-width:1000px){ .ses-table .pay-hint{display:none} }
 
+/* ---- v1.9: varios medicamentos con su dosis ---- */
+.med-head,.med-line{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 40px;gap:8px;align-items:center}
+.med-head{font-size:.72rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-top:4px}
+.med-rows{display:flex;flex-direction:column;gap:8px;margin:6px 0 10px}
+.med-line input{min-height:48px;border-radius:var(--r-sm);border:2px solid var(--line);background:#fff;padding:0 12px;outline:none;width:100%}
+.med-line input:focus{border-color:var(--lav-d)}
+.field [data-add-med]{align-self:flex-start}
+.med-desde{max-width:320px}
+.med-mini{border-collapse:collapse;margin:2px 0 4px;min-width:min(100%,420px)}
+.med-mini th{text-align:left;font-size:.68rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);padding:2px 18px 4px 0;border-bottom:1px solid var(--line)}
+.med-mini td{padding:5px 18px 5px 0;border-bottom:1px solid var(--line);font-weight:700}
+.med-mini td + td{font-weight:600}
+.med-ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.med-ul li{display:flex;gap:10px;flex-wrap:wrap}
+.med-ul li span{color:var(--ink-soft)}
+
+/* ---- v1.9.1: editar consulta ---- */
+.ses-table col.w-acc{width:84px}
+.cell-edit{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left;text-decoration:underline dotted var(--ink-soft);text-underline-offset:3px}
+.chip-opt span .ic{width:1em;height:1em}
+#ef-pago{margin-top:-4px}
+@media (max-width:620px){ .ses-table .c-fecha{padding-right:90px} }
+
 /* ============ IMPRESIÓN ============ */
 @media print{
   body{background:#fff;font-size:12pt}
