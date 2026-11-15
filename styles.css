@@ -471,8 +471,8 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 .ses-table .pay-hint{margin-left:0}
 .ses-table .c-acc{text-align:right}
 .ses-card{padding:6px 12px}
-/* tablet vertical y pantallas angostas: cada consulta como ficha de 2 columnas, sin barra de desplazamiento */
-@media (max-width:820px){
+/* pantallas angostas: cada consulta como ficha de 2 columnas, sin barra de desplazamiento */
+@media (max-width:620px){
   .ses-table,.ses-table tbody{display:block;width:100%}
   .ses-table colgroup,.ses-table thead{display:none}
   .ses-table tr{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;padding:12px 10px 12px 14px;border-bottom:1px solid var(--line);position:relative}
@@ -486,6 +486,51 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
   .ses-table .c-acc::before{display:none}
   .ses-table .c-fecha{padding-right:48px}
 }
+
+/* ---- v1.8.3: ficha compacta y en columnas ---- */
+.pro-main{padding-top:22px}
+.ficha-head{margin-bottom:16px;gap:16px}
+.ficha-head .avatar.xl{width:72px;height:72px;font-size:1.5rem}
+.section-title{margin:22px 0 10px}
+.section-title h2{font-size:1.2rem}
+.card{padding:18px 20px}
+.fee-card,.med-card{margin:0 0 16px}
+.fee-card .section-title,.med-card .section-title{margin:0 0 6px}
+.fee-hist th{padding:6px;font-size:.72rem}
+.fee-hist td{padding:7px 6px;font-size:.95rem}
+.fee-hist .icon-btn.sm{width:34px;height:34px}
+.note{padding:12px 16px;margin-bottom:12px;gap:10px;align-items:center}
+.note .ic{width:22px;height:22px;margin-top:0}
+.pay-list{gap:8px}
+.pay-row{padding:10px 16px;gap:10px}
+.pay-date strong{font-size:1.02rem}
+.card.empty.slim{padding:14px}
+/* datos del paciente en columnas */
+.datos-card{margin-bottom:16px}
+.datos{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0 22px;margin:0}
+.dato{padding:10px 0;border-bottom:1px solid var(--line);min-width:0}
+.dato dt{display:flex;align-items:center;gap:6px;font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:3px}
+.dato dt .ic{width:15px;height:15px;color:var(--lav-d)}
+.dato dd{margin:0;font-weight:700;font-size:1rem;overflow-wrap:anywhere;display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.dato dd small{font-weight:600;font-size:.8rem;color:var(--ink-soft)}
+.dato dd small.prox{color:var(--butter-d)}
+.dato dd a{color:inherit}
+.dato .pay.bday{margin-top:4px}
+.dato-med{border-bottom:0;padding-bottom:2px}
+.dato-med .med{white-space:pre-line}
+.linkbtn{border:0;background:none;padding:2px 0;font:inherit;font-size:.82rem;font-weight:800;color:var(--lav-d);text-decoration:underline;cursor:pointer}
+.portal-data .datos-card{box-shadow:none;padding:6px 0 0;background:transparent}
+/* tabla de consultas más compacta */
+.ses-card{padding:4px 12px}
+.ses-table col.w-fecha{width:15%} .ses-table col.w-modo{width:18%} .ses-table col.w-valor{width:12%}
+.ses-table col.w-pago{width:20%} .ses-table col.w-acc{width:46px}
+.ses-table th{padding:8px 6px 6px;font-size:.7rem}
+.ses-table td{padding:7px 6px;font-size:.94rem}
+.ses-table .firma-mini{height:28px;max-width:96px;margin-top:2px}
+.ses-table .pay-tap{min-height:34px;padding:4px 10px}
+.ses-table .icon-btn.sm{width:34px;height:34px}
+.ses-group{padding:10px 14px}
+@media (max-width:1000px){ .ses-table .pay-hint{display:none} }
 
 /* ============ IMPRESIÓN ============ */
 @media print{
