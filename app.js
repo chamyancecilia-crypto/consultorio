@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.9.4';
+const APP_VERSION = '1.9.5';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1006,7 +1006,7 @@ function viewPatient(main) {
         <button class="btn primary" data-act="sign-for" data-pid="${p.id}">${icon('pen')} Pasar a firma</button>
         <button class="btn sky" data-act="add-online" data-pid="${p.id}">${icon('video')} Consulta online</button>
         <button class="btn soft" data-act="edit-patient" data-pid="${p.id}">${icon('edit')} Editar</button>
-        <button class="btn soft" data-act="print-patient" data-pid="${p.id}">${icon('print')} PDF</button>
+        <button class="btn soft" data-act="print-patient" data-pid="${p.id}">${icon('print')} Imprimir</button>
       </div></header>
     ${infoCards(p, { pro: true })}
     ${honorariosHTML(p)}
@@ -1167,28 +1167,75 @@ function renderPortal(app) {
   </div>`;
 }
 
-function printPatient(p) {
-  const ss = sessionsOf(p.id).slice().reverse();
+function printOptions(p) {
+  const all = sessionsOf(p.id);
+  const fechas = all.map(s => s.fecha).sort();
+  const o = S.printOpts || { orden: 'asc', estado: 'todas', hon: false, med: false };
+  openModal(`<h2>Imprimir ficha</h2><p class="muted">${esc(p.nombre)} · datos básicos y lista de asistencia</p>
+    <form id="prf">
+      <p class="form-sec">Ordenar por fecha de asistencia</p>
+      <div class="field"><div class="chips">
+        <label class="chip-opt"><input type="radio" name="orden" value="asc" ${o.orden === 'asc' ? 'checked' : ''}><span>Más antigua primero</span></label>
+        <label class="chip-opt"><input type="radio" name="orden" value="desc" ${o.orden === 'desc' ? 'checked' : ''}><span>Más reciente primero</span></label></div></div>
+      <p class="form-sec">Qué consultas</p>
+      <div class="row2">
+        <div class="field"><label for="pr-d">Desde</label><input id="pr-d" name="desde" type="date" value="${fechas[0] || ''}"></div>
+        <div class="field"><label for="pr-h">Hasta</label><input id="pr-h" name="hasta" type="date" value="${fechas[fechas.length - 1] || ''}"></div>
+      </div>
+      <div class="field"><div class="chips">
+        <label class="chip-opt"><input type="radio" name="estado" value="todas" ${o.estado === 'todas' ? 'checked' : ''}><span>Todas</span></label>
+        <label class="chip-opt"><input type="radio" name="estado" value="pend" ${o.estado === 'pend' ? 'checked' : ''}><span>Sin pagar</span></label>
+        <label class="chip-opt"><input type="radio" name="estado" value="pagas" ${o.estado === 'pagas' ? 'checked' : ''}><span>Pagas</span></label></div></div>
+      <p class="form-sec">Agregar también</p>
+      <div class="field"><div class="chips">
+        <label class="chip-opt"><input type="checkbox" name="hon" ${o.hon ? 'checked' : ''}><span>Historial de honorarios</span></label>
+        <label class="chip-opt"><input type="checkbox" name="med" ${o.med ? 'checked' : ''}><span>Historial de medicación</span></label></div></div>
+      <p class="pr-count muted" id="pr-n"></p>
+      <div class="modal-actions"><button type="button" class="btn ghost" id="prc">Cancelar</button><button class="btn primary">${icon('print')} Imprimir</button></div>
+    </form>`, {
+    onMount: m => {
+      const f = $('#prf', m);
+      const leer = () => ({ orden: f.orden.value, estado: f.estado.value, desde: f.desde.value, hasta: f.hasta.value, hon: f.hon.checked, med: f.med.checked });
+      const contar = () => { const n = filtrarImpresion(all, leer()).length; $('#pr-n', m).textContent = n ? `Se van a imprimir ${n} consulta${n === 1 ? '' : 's'}.` : 'No hay consultas con esos filtros (se imprimen solo los datos).'; };
+      f.addEventListener('input', contar); f.addEventListener('change', contar); contar();
+      $('#prc', m).onclick = closeModal;
+      f.onsubmit = e => { e.preventDefault(); const v = leer(); S.printOpts = { orden: v.orden, estado: v.estado, hon: v.hon, med: v.med }; closeModal(); printPatient(p, v); };
+    }
+  });
+}
+function filtrarImpresion(ss, o) {
+  return ss.filter(s => (!o.desde || s.fecha >= o.desde) && (!o.hasta || s.fecha <= o.hasta) && (o.estado === 'todas' || (o.estado === 'pagas' ? isPaid(s) : !isPaid(s))))
+    .sort((a, b) => { const k = (a.fecha + (a.hora || '')).localeCompare(b.fecha + (b.hora || '')); return o.orden === 'desc' ? -k : k; });
+}
+function printPatient(p, o = { orden: 'asc', estado: 'todas' }) {
+  const ss = filtrarImpresion(sessionsOf(p.id), o);
+  const pagas = ss.filter(isPaid), pend = ss.filter(s => !isPaid(s));
+  const deuda = pend.reduce((t, s) => t + (Number(s.valor) || 0), 0);
+  const meds = (p.medicacionItems || []).length ? esc(medTexto(p.medicacionItems)) : esc(p.medicacion || '—');
+  const rango = o.desde || o.hasta ? `Del ${o.desde ? fmtDMY(o.desde) : '—'} al ${o.hasta ? fmtDMY(o.hasta) : '—'}` : '';
   $('#print-root').innerHTML = `
-    <p style="color:#888;margin:0">${esc(S.settings.consultorio || 'Consultorio')} · Registro de asistencia</p>
+    <p class="pr-top">${esc(S.settings.consultorio || 'Consultorio')} · Registro de asistencia</p>
     <h1>${esc(p.nombre)}</h1>
-    <div class="pr-meta">
-      <div><b>Cédula:</b> ${esc(p.ci || '—')}</div><div><b>Teléfono:</b> ${esc(p.telefono || '—')}</div>
-      <div><b>Fecha de nacimiento:</b> ${p.fechaNacimiento ? fmtDMY(p.fechaNacimiento) + ' (' + edad(p.fechaNacimiento) + ' años)' : '—'}</div>
-      <div><b>Mail:</b> ${esc(p.email || '—')}</div>
-      <div><b>Contacto de emergencia:</b> ${esc(p.emergenciaNombre || '—')} ${esc(p.emergenciaTel || '')}</div>
-      <div><b>Institución médica:</b> ${esc(p.cobertura || '—')}</div><div><b>Psiquiatra tratante:</b> ${esc(p.psiquiatra || '—')}</div>
-      <div style="grid-column:1/-1;white-space:pre-line"><b>Medicación actual:</b> ${esc(p.medicacion || '—')}${p.medicacionDesde ? ' (desde ' + fmtDMY(p.medicacionDesde) + ')' : ''}</div>
-      <div><b>Valor de la consulta:</b> ${money(p.valor)}${p.valorActualizado ? ' (desde ' + fmtDMY(p.valorActualizado) + ')' : ''}</div>
-    </div>
-    ${histOrden(p).length ? `<h3 style="margin:0 0 6pt">Historial de honorarios</h3><table style="margin-bottom:16pt"><thead><tr><th>Vigente desde</th><th>Monto</th><th>Variación</th><th>Nota</th></tr></thead>
+    <dl class="pr-datos">
+      <div><dt>Cédula</dt><dd>${esc(p.ci || '—')}</dd></div>
+      <div><dt>Fecha de nacimiento</dt><dd>${p.fechaNacimiento ? fmtDMY(p.fechaNacimiento) + ' (' + edad(p.fechaNacimiento) + ' años)' : '—'}</dd></div>
+      <div><dt>Teléfono</dt><dd>${esc(p.telefono || '—')}</dd></div>
+      <div><dt>Mail</dt><dd>${esc(p.email || '—')}</dd></div>
+      <div><dt>Contacto de emergencia</dt><dd>${esc(p.emergenciaNombre || '—')} ${esc(p.emergenciaTel || '')}</dd></div>
+      <div><dt>Institución médica</dt><dd>${esc(p.cobertura || '—')}</dd></div>
+      <div><dt>Psiquiatra tratante</dt><dd>${esc(p.psiquiatra || '—')}</dd></div>
+      <div><dt>Medicación actual</dt><dd style="white-space:pre-line">${meds}${p.medicacionDesde ? ' (desde ' + fmtDMY(p.medicacionDesde) + ')' : ''}</dd></div>
+      <div><dt>Valor de la consulta</dt><dd>${money(p.valor)}${p.valorActualizado ? ' (desde ' + fmtDMY(p.valorActualizado) + ')' : ''}</dd></div>
+    </dl>
+    ${o.hon && histOrden(p).length ? `<h3>Historial de honorarios</h3><table class="pr-hist"><thead><tr><th>Vigente desde</th><th>Monto</th><th>Variación</th><th>Nota</th></tr></thead>
       <tbody>${histOrden(p).map((x, i, a) => { const v = variacion(a[i - 1]?.valor, x.valor); return `<tr><td>${fmtDMY(x.fecha)}</td><td>${money(x.valor)}</td><td>${v == null ? '—' : (v > 0 ? '+' : '') + String(v).replace('.', ',') + ' %'}</td><td>${esc(x.nota || '')}</td></tr>`; }).join('')}</tbody></table>` : ''}
-    ${medOrden(p).length ? `<h3 style="margin:0 0 6pt">Historial de medicación</h3><table style="margin-bottom:16pt"><thead><tr><th>Desde</th><th>Medicación</th><th>Nota</th></tr></thead>
+    ${o.med && medOrden(p).length ? `<h3>Historial de medicación</h3><table class="pr-hist"><thead><tr><th>Desde</th><th>Medicación</th><th>Nota</th></tr></thead>
       <tbody>${medOrden(p).map(x => `<tr><td>${fmtDMY(x.fecha)}</td><td style="white-space:pre-line">${medItems(x).length ? esc(medTexto(medItems(x))) : 'Sin medicación'}</td><td>${esc(x.nota || '')}</td></tr>`).join('')}</tbody></table>` : ''}
-    <h3 style="margin:0 0 6pt">Sesiones</h3>
-    <table><thead><tr><th>#</th><th>Fecha</th><th>Hora</th><th>Modalidad</th><th>Valor</th><th>Pago</th><th>Firma</th></tr></thead>
-    <tbody>${ss.map((s, i) => `<tr><td>${i + 1}</td><td>${fmtDMY(s.fecha)}</td><td>${esc(s.hora)}</td><td>${isOnline(s) ? 'Online' : 'Presencial'}</td><td>${s.valor != null ? money(s.valor) : '—'}</td><td>${isPaid(s) ? fmtDMY(s.pago.fecha) + (s.pago.medio ? '<br><small>' + esc(s.pago.medio) + '</small>' : '') : 'Pendiente'}</td><td>${s.firma ? `<img src="${s.firma}">` : 'Sin firma (online)'}</td></tr>`).join('')}</tbody></table>
-    <p style="color:#888;margin-top:14pt;font-size:9pt">Generado el ${fmtDMY(isoDate())} ${hhmm(new Date())}</p>`;
+    <h3>Lista de asistencia${o.estado === 'pend' ? ' · sin pagar' : o.estado === 'pagas' ? ' · pagas' : ''}</h3>
+    <p class="pr-sub">${rango ? rango + ' · ' : ''}${ss.length} consulta${ss.length === 1 ? '' : 's'} · ${pagas.length} paga${pagas.length === 1 ? '' : 's'} · ${pend.length} sin pagar${deuda ? ' (' + money(deuda) + ')' : ''} · ordenadas de la ${o.orden === 'desc' ? 'más reciente a la más antigua' : 'más antigua a la más reciente'}</p>
+    ${ss.length ? `<table class="pr-asist"><thead><tr><th>#</th><th>Fecha de asistencia</th><th>Firma</th><th>Pago</th><th>Fecha de pago</th></tr></thead>
+    <tbody>${ss.map((s, i) => `<tr><td>${i + 1}</td><td><b>${fmtDMY(s.fecha)}</b>${s.hora ? '<br><small>' + esc(s.hora) + ' hs</small>' : ''}</td><td>${s.firma ? `<img src="${s.firma}" alt="">` : `<small>${isOnline(s) ? 'Online (sin firma)' : 'Sin firma'}</small>`}</td><td>${isPaid(s) ? 'Paga' : 'No paga'}${s.valor != null ? '<br><small>' + money(s.valor) + '</small>' : ''}</td><td>${isPaid(s) ? fmtDMY(s.pago.fecha) + (s.pago.medio ? '<br><small>' + esc(s.pago.medio) + '</small>' : '') : '—'}</td></tr>`).join('')}</tbody></table>` : '<p>No hay consultas para mostrar.</p>'}
+    <p class="pr-foot">Generado el ${fmtDMY(isoDate())} ${hhmm(new Date())}</p>`;
   setTimeout(() => window.print(), 200);
 }
 
@@ -1445,7 +1492,7 @@ const ACTIONS = {
     else { await DB.del('sessions', s.id); S.sessions = S.sessions.filter(x => x.id !== s.id); }
     render(); toast('Firma eliminada');
   },
-  'print-patient': el => printPatient(patientById(el.dataset.pid)),
+  'print-patient': el => printOptions(patientById(el.dataset.pid)),
   'save-google': async el => {
     let url = $('#s-url').value.trim(); const token = $('#s-token').value.trim();
     if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(url)) { toast('La URL tiene que ser de script.google.com y terminar en /exec', 'err'); return; }
