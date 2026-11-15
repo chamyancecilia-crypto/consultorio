@@ -562,15 +562,27 @@ button.pay-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:poin
 .edit-pac{color:var(--peach-d) !important;font-weight:700}
 
 /* ============ IMPRESIÓN ============ */
+.pr-count{margin:4px 0 0;font-weight:700}
 @media print{
-  body{background:#fff;font-size:12pt}
+  body{background:#fff;font-size:11pt}
   body > *:not(#print-root){display:none !important}
   #print-root{display:block;color:#222;font-family:var(--font)}
-  #print-root h1{font-size:20pt;margin-bottom:4pt}
-  #print-root .pr-meta{display:grid;grid-template-columns:1fr 1fr;gap:6pt 24pt;margin:12pt 0 18pt;padding:10pt 0;border-top:1px solid #ccc;border-bottom:1px solid #ccc}
+  #print-root .pr-top{color:#888;margin:0;font-size:9.5pt}
+  #print-root h1{font-size:20pt;margin:2pt 0 8pt}
+  #print-root h3{font-size:13pt;margin:14pt 0 4pt}
+  #print-root .pr-datos{margin:0 0 6pt;border-top:1px solid #ccc}
+  #print-root .pr-datos > div{display:flex;gap:10pt;padding:4pt 0;border-bottom:1px solid #e3e3e3;break-inside:avoid}
+  #print-root .pr-datos dt{flex:0 0 140pt;color:#666;font-weight:700;font-size:9.5pt;text-transform:uppercase;letter-spacing:.03em;padding-top:1pt}
+  #print-root .pr-datos dd{margin:0;flex:1}
+  #print-root .pr-sub{color:#666;font-size:9.5pt;margin:0 0 6pt}
   #print-root table{width:100%;border-collapse:collapse}
-  #print-root th,#print-root td{border-bottom:1px solid #ddd;padding:6pt;text-align:left;vertical-align:middle}
-  #print-root td img{height:48pt;max-width:180pt;object-fit:contain}
+  #print-root th{font-size:9pt;text-transform:uppercase;letter-spacing:.03em;color:#666;border-bottom:1.5px solid #999}
+  #print-root th,#print-root td{border-bottom:1px solid #ddd;padding:5pt 6pt;text-align:left;vertical-align:middle}
+  #print-root td small{color:#666}
+  #print-root .pr-asist td:first-child,#print-root .pr-asist th:first-child{width:22pt;color:#888}
+  #print-root td img{height:40pt;max-width:160pt;object-fit:contain}
   #print-root tr{break-inside:avoid}
-  @page{margin:16mm}
+  #print-root thead{display:table-header-group}
+  #print-root .pr-foot{color:#888;margin-top:14pt;font-size:9pt}
+  @page{margin:14mm}
 }
