@@ -6,7 +6,7 @@
    ========================================================= */
 'use strict';
 
-const APP_VERSION = '1.9.6';
+const APP_VERSION = '1.9.7';
 
 /* ---------------- utilidades ---------------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -1079,7 +1079,7 @@ function openPayment(sid, by) {
   openModal(`<h2>Registrar pago</h2>
     <p class="muted">Consulta del <strong>${fmtDMY(s.fecha)}</strong>${s.valor != null ? ' · ' + money(s.valor) : ''}</p>
     <form id="payf">
-      <div class="field"><label for="pay-fecha">Fecha de pago</label><input id="pay-fecha" name="fecha" type="date" required max="${isoDate()}" value="${esc(cur.fecha || isoDate())}"></div>
+      <div class="field"><label for="pay-fecha">Fecha de pago</label><input id="pay-fecha" name="fecha" type="date" required ${by === 'paciente' ? `max="${isoDate()}"` : ''} value="${esc(cur.fecha || isoDate())}"></div>
       <div class="field"><label>Medio de pago</label>
         <div class="chips" role="radiogroup" aria-label="Medio de pago">${MEDIOS.map((m, i) => `<label class="chip-opt"><input type="radio" name="medio" value="${esc(m)}" ${(cur.medio ? cur.medio === m : i === 1) ? 'checked' : ''}><span>${esc(m)}</span></label>`).join('')}</div></div>
       <div class="modal-actions">
@@ -1305,7 +1305,7 @@ function sessionForm(s, { pac = false, nuevo = false } = {}) {
     <form id="ef">
       <p class="form-sec">Consulta</p>
       <div class="row2">
-        <div class="field"><label for="ef-f">Fecha de asistencia</label><input id="ef-f" name="f" type="date" required ${nuevo ? '' : `max="${isoDate()}"`} value="${esc(s.fecha)}"></div>
+        <div class="field"><label for="ef-f">Fecha de asistencia</label><input id="ef-f" name="f" type="date" required ${pac ? `max="${isoDate()}"` : ''} value="${esc(s.fecha)}"></div>
         <div class="field"><label for="ef-h">Hora</label><input id="ef-h" name="h" type="time" value="${esc(s.hora || '')}"></div>
       </div>
       <div class="field"><label>Modalidad</label><div class="chips">
@@ -1321,7 +1321,7 @@ function sessionForm(s, { pac = false, nuevo = false } = {}) {
         <label class="chip-opt"><input type="radio" name="est" value="no" ${isPaid(s) ? '' : 'checked'}><span>No paga</span></label>
         <label class="chip-opt"><input type="radio" name="est" value="si" ${isPaid(s) ? 'checked' : ''}><span>Paga</span></label></div></div>
       <div id="ef-pago" ${isPaid(s) ? '' : 'hidden'}>
-        <div class="field"><label for="ef-pf">Fecha de pago</label><input id="ef-pf" name="pf" type="date" max="${isoDate()}" value="${esc(pago.fecha || isoDate())}"></div>
+        <div class="field"><label for="ef-pf">Fecha de pago</label><input id="ef-pf" name="pf" type="date" ${pac ? `max="${isoDate()}"` : ''} value="${esc(pago.fecha || isoDate())}"></div>
         <div class="field"><label>Medio de pago</label><div class="chips">${MEDIOS.map((md, i) => `<label class="chip-opt"><input type="radio" name="medio" value="${esc(md)}" ${(pago.medio ? pago.medio === md : i === 1) ? 'checked' : ''}><span>${esc(md)}</span></label>`).join('')}</div></div>
       </div>
       <div class="modal-actions"><button type="button" class="btn ghost" id="ec">Cancelar</button><button class="btn primary">${icon('check')} ${nuevo ? 'Crear consulta' : 'Guardar cambios'}</button></div>
@@ -1456,7 +1456,7 @@ const ACTIONS = {
     const p = patientById(el.dataset.pid);
     openModal(`<h2>Registrar consulta online</h2><p class="muted">Queda registrada sin firma, como consulta online de ${esc(p.nombre)}.</p>
       <form id="of"><div class="row2">
-        <div class="field"><label for="of-f">Fecha de la consulta</label><input id="of-f" name="f" type="date" required max="${isoDate()}" value="${isoDate()}"></div>
+        <div class="field"><label for="of-f">Fecha de la consulta</label><input id="of-f" name="f" type="date" required value="${isoDate()}"></div>
         <div class="field"><label for="of-h">Hora</label><input id="of-h" name="h" type="time" value="${hhmm(new Date())}"></div></div>
         <div class="field"><label for="of-n">Nota (opcional)</label><input id="of-n" name="n" placeholder="Ej: videollamada por Zoom"></div>
         <p class="hint muted small" id="of-v"></p>
@@ -1513,11 +1513,11 @@ const ACTIONS = {
     render(); toast('Cambio borrado'); syncAll();
   },
   'del-session': async el => {
-    const s = S.sessions.find(x => x.id === el.dataset.sid);
-    if (!(await confirmBox('Eliminar firma', `¿Eliminar la firma del ${fmtDMY(s.fecha)} a las ${s.hora}? También se borra de Drive.`, 'Eliminar', true))) return;
+    const s = S.sessions.find(x => x.id === el.dataset.sid); if (!s) return;
+    if (!(await confirmBox('Eliminar consulta', `¿Eliminar la consulta del ${fmtDMY(s.fecha)}${s.hora ? ' a las ' + s.hora : ''}? Se borra con su firma y su pago, también de la planilla de Drive.`, 'Eliminar', true))) return;
     if (s.sync === 'ok') { s.deleted = true; s.sync = 'pending'; await DB.put('sessions', s); syncAll(); }
     else { await DB.del('sessions', s.id); S.sessions = S.sessions.filter(x => x.id !== s.id); }
-    render(); toast('Firma eliminada');
+    render(); toast('Consulta eliminada', 'ok');
   },
   'print-patient': el => printOptions(patientById(el.dataset.pid)),
   'save-google': async el => {
